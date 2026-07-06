@@ -1,0 +1,5 @@
+idf_component_register(
+    SRCS "haptic_uart.c"
+    INCLUDE_DIRS "include"
+    REQUIRES esp_driver_uart app_protocol
+)

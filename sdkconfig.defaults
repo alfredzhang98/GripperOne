@@ -1,0 +1,28 @@
+# Default sdkconfig values for the gripper_plus firmware.
+# These are applied on top of the per-target defaults when the build
+# directory is first generated. Adjust with `idf.py menuconfig`.
+
+# --- Target ---------------------------------------------------------------
+CONFIG_IDF_TARGET="esp32c6"
+
+# --- Console -------------------------------------------------------------
+# XIAO ESP32-C6 exposes the internal USB Serial/JTAG on the USB-C port.
+# Keep the console there so that both hardware UART controllers (UART0 and
+# UART1) remain free for the haptic board and the IMU.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- Bluetooth / NimBLE ---------------------------------------------------
+# The ESP32-C6 uses the NimBLE host for BLE. Enable the controller + host.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+# We act as a GATT server only; central/observer roles are not needed.
+# (Leave them at their defaults so NimBLE can still build.)
+
+# --- FreeRTOS -------------------------------------------------------------
+# 1 kHz tick keeps the supervisor state machine responsive.
+CONFIG_FREERTOS_HZ=1000
+
+# --- Logging --------------------------------------------------------------
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
