@@ -28,6 +28,8 @@ typedef struct {
     int      baud_rate;
     int      rx_buf_size;  /* driver RX ring buffer, bytes */
     int      tx_buf_size;  /* driver TX ring buffer, bytes (0 = blocking TX) */
+    int      task_stack;   /* task stack depth, bytes (0 = built-in default) */
+    int      task_prio;    /* FreeRTOS priority       (0 = built-in default) */
 } haptic_uart_cfg_t;
 
 /**

@@ -57,6 +57,8 @@ void app_main(void)
         .baud_rate   = HAPTIC_UART_BAUD,
         .rx_buf_size = UART_RX_BUFFER_SIZE,
         .tx_buf_size = UART_TX_BUFFER_SIZE,
+        .task_stack  = TASK_STACK_HAPTIC,
+        .task_prio   = TASK_PRIO_HAPTIC,
     };
     ESP_ERROR_CHECK(haptic_uart_start(&haptic_cfg, &s_bus));
 
@@ -67,6 +69,8 @@ void app_main(void)
         .rx_gpio     = PIN_IMU_UART_RX,
         .baud_rate   = IMU_UART_BAUD,
         .rx_buf_size = UART_RX_BUFFER_SIZE,
+        .task_stack  = TASK_STACK_IMU,
+        .task_prio   = TASK_PRIO_IMU,
     };
     ESP_ERROR_CHECK(imu_uart_start(&imu_cfg, &s_bus));
 
@@ -75,6 +79,10 @@ void app_main(void)
         .tx_gpio      = PIN_MOTOR_TWAI_TX,
         .rx_gpio      = PIN_MOTOR_TWAI_RX,
         .bitrate_kbps = MOTOR_TWAI_BITRATE_KBPS,
+        .esc_id       = MOTOR_TWAI_ESC_ID,
+        .mst_id       = MOTOR_TWAI_MST_ID,
+        .task_stack   = TASK_STACK_MOTOR,
+        .task_prio    = TASK_PRIO_MOTOR,
     };
     ESP_ERROR_CHECK(motor_twai_start(&motor_cfg, &s_bus));
 
@@ -82,7 +90,12 @@ void app_main(void)
     ESP_ERROR_CHECK(gripper_init());
 
     /* ---- Supervisor state machine (ticks the gripper) ---- */
-    ESP_ERROR_CHECK(app_supervisor_start(&s_bus));
+    const app_supervisor_cfg_t supervisor_cfg = {
+        .task_stack  = TASK_STACK_SUPERVISOR,
+        .task_prio   = TASK_PRIO_SUPERVISOR,
+        .overforce_n = GRIPPER_OVERFORCE_N,
+    };
+    ESP_ERROR_CHECK(app_supervisor_start(&s_bus, &supervisor_cfg));
 
 #if APP_ENABLE_BLE
     ESP_ERROR_CHECK(wireless_ble_start(&s_bus, BLE_DEVICE_NAME));
@@ -101,6 +114,8 @@ void app_main(void)
         .scl_gpio = PIN_OLED_I2C_SCL,
         .freq_hz  = OLED_I2C_FREQ_HZ,
         .addr     = OLED_I2C_ADDR,
+        .task_stack = TASK_STACK_OLED,
+        .task_prio  = TASK_PRIO_OLED,
     };
     ESP_ERROR_CHECK(oled_start(&oled_cfg, &s_bus, app_supervisor_state_ptr()));
 #endif

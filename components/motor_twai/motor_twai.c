@@ -15,9 +15,10 @@ static const char *TAG = "motor_twai";
  * ESC_ID (reg 0x08) = motor's receive ID, factory default 0x01.
  * MST_ID (reg 0x07) = feedback ID the motor transmits on, factory default 0x00.
  * In MIT control mode the command frame is sent to CAN ID = ESC_ID.
- * Update these to match your motor's configured IDs. */
-#define MOTOR_ESC_ID    0x001   /* host -> motor: MIT command frame ID */
-#define MOTOR_MST_ID    0x000   /* motor -> host: feedback frame ID   */
+ * These are the built-in defaults; the actual IDs come from motor_twai_cfg_t
+ * (set in main from app_config.h) and can be overridden per build. */
+#define MOTOR_ESC_ID_DEFAULT    0x001   /* host -> motor: MIT command frame ID */
+#define MOTOR_MST_ID_DEFAULT    0x000   /* motor -> host: feedback frame ID    */
 
 /* MIT-mode value ranges (register defaults PMAX/VMAX/TMAX for the 4310). Keep
  * these in sync with the motor's PMAX(0x15)/VMAX(0x16)/TMAX(0x17) registers. */
@@ -56,6 +57,10 @@ static float uint_to_float(uint16_t x, float x_min, float x_max, uint8_t bits)
 static twai_node_handle_t s_node = NULL;
 static const app_bus_t   *s_bus  = NULL;
 
+/* Runtime CAN IDs (overridable via cfg; default to the Damiao factory values). */
+static uint32_t s_esc_id = MOTOR_ESC_ID_DEFAULT;
+static uint32_t s_mst_id = MOTOR_MST_ID_DEFAULT;
+
 static volatile bool  s_enabled = false;
 static volatile float s_target  = 0.0f;   /* MIT position command, rad     */
 static volatile float s_vel     = 0.0f;   /* MIT velocity command, rad/s   */
@@ -82,14 +87,14 @@ static void motor_tx_id(uint32_t can_id, const uint8_t data[8])
 void motor_twai_enable(void)
 {
     s_enabled = true;
-    if (s_node) motor_tx_id(MOTOR_ESC_ID, DM_FRAME_ENABLE);
+    if (s_node) motor_tx_id(s_esc_id, DM_FRAME_ENABLE);
     ESP_LOGI(TAG, "enable requested");
 }
 
 void motor_twai_disable(void)
 {
     s_enabled = false;
-    if (s_node) motor_tx_id(MOTOR_ESC_ID, DM_FRAME_DISABLE);
+    if (s_node) motor_tx_id(s_esc_id, DM_FRAME_DISABLE);
     ESP_LOGI(TAG, "disable requested");
 }
 
@@ -119,13 +124,13 @@ void motor_twai_set_gains(float kp, float kd)
 
 void motor_twai_save_zero(void)
 {
-    if (s_node) motor_tx_id(MOTOR_ESC_ID, DM_FRAME_SAVE_ZERO);
+    if (s_node) motor_tx_id(s_esc_id, DM_FRAME_SAVE_ZERO);
     ESP_LOGI(TAG, "save-zero");
 }
 
 void motor_twai_clear_error(void)
 {
-    if (s_node) motor_tx_id(MOTOR_ESC_ID, DM_FRAME_CLEAR_ERR);
+    if (s_node) motor_tx_id(s_esc_id, DM_FRAME_CLEAR_ERR);
     ESP_LOGI(TAG, "clear-error");
 }
 
@@ -162,7 +167,7 @@ static void motor_send_command(void)
     data[5] = kd >> 4;
     data[6] = ((kd & 0xF) << 4) | (tq >> 8);
     data[7] = tq & 0xFF;
-    motor_tx_id(MOTOR_ESC_ID, data);
+    motor_tx_id(s_esc_id, data);
 }
 
 /* ---- RX path: on_rx_done runs in ISR context ---------------------------- */
@@ -224,6 +229,8 @@ int motor_twai_start(const motor_twai_cfg_t *cfg, const app_bus_t *bus)
         return ESP_ERR_INVALID_ARG;
     }
     s_bus = bus;
+    s_esc_id = cfg->esc_id >= 0 ? (uint32_t)cfg->esc_id : MOTOR_ESC_ID_DEFAULT;
+    s_mst_id = cfg->mst_id >= 0 ? (uint32_t)cfg->mst_id : MOTOR_MST_ID_DEFAULT;
 
     twai_onchip_node_config_t node_cfg = {
         .io_cfg = {
@@ -244,8 +251,11 @@ int motor_twai_start(const motor_twai_cfg_t *cfg, const app_bus_t *bus)
     };
     ESP_ERROR_CHECK(twai_node_register_event_callbacks(s_node, &cbs, NULL));
 
-    /* Accept all standard IDs (id=0, mask=0 -> every bit "don't care"). */
-    const twai_mask_filter_config_t filter = { .id = 0, .mask = 0, .is_ext = false };
+    /* Only accept the motor's feedback frame (MST_ID). A full 11-bit mask means
+     * every ID bit must match, so unrelated traffic on a shared bus can't be
+     * mis-decoded as motor feedback and spuriously trip the ERROR/SAFE_STOP
+     * path. Set MOTOR_TWAI_MST_ID (app_config.h) if the motor is reconfigured. */
+    const twai_mask_filter_config_t filter = { .id = s_mst_id, .mask = 0x7FF, .is_ext = false };
     ESP_ERROR_CHECK(twai_node_config_mask_filter(s_node, 0, &filter));
 
     ESP_ERROR_CHECK(twai_node_enable(s_node));
@@ -253,7 +263,9 @@ int motor_twai_start(const motor_twai_cfg_t *cfg, const app_bus_t *bus)
     ESP_LOGI(TAG, "TWAI up: TX=GPIO%d RX=GPIO%d @ %d kbps (external transceiver required)",
              cfg->tx_gpio, cfg->rx_gpio, cfg->bitrate_kbps);
 
-    if (xTaskCreate(motor_twai_task, "motor_twai", 4096, NULL, 7, NULL) != pdPASS) {
+    uint32_t   stack = cfg->task_stack > 0 ? (uint32_t)cfg->task_stack : 4096;
+    UBaseType_t prio = cfg->task_prio  > 0 ? (UBaseType_t)cfg->task_prio : 7;
+    if (xTaskCreate(motor_twai_task, "motor_twai", stack, NULL, prio, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create motor_twai_task");
         return ESP_FAIL;
     }

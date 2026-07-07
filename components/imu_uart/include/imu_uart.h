@@ -25,6 +25,8 @@ typedef struct {
     int rx_gpio;
     int baud_rate;
     int rx_buf_size;
+    int task_stack;   /* task stack depth, bytes (0 = built-in default) */
+    int task_prio;    /* FreeRTOS priority       (0 = built-in default) */
 } imu_uart_cfg_t;
 
 /**

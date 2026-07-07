@@ -37,6 +37,10 @@ static volatile uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;  /* written on
 static uint16_t         s_telem_val_handle;
 
 static app_proto_parser_t s_parser;                 /* per-connection reassembly */
+/* Last outbound frame, cached for GATT reads. Written by the sink (supervisor
+ * task) and read by gatt_access (BLE host task), so guard it with a spinlock to
+ * avoid handing back a half-updated frame. */
+static portMUX_TYPE     s_tx_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t          s_last_tx[APP_PROTO_MAX_FRAME];  /* last frame, for GATT read */
 static size_t           s_last_tx_len;
 
@@ -47,15 +51,34 @@ static void ble_sink(const uint8_t *frame, size_t len, void *ctx)
 {
     (void)ctx;
     if (len <= sizeof(s_last_tx)) {
+        portENTER_CRITICAL(&s_tx_mux);
         memcpy(s_last_tx, frame, len);
         s_last_tx_len = len;
+        portEXIT_CRITICAL(&s_tx_mux);
     }
-    if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+    uint16_t conn = s_conn_handle;
+    if (conn == BLE_HS_CONN_HANDLE_NONE) {
         return;
     }
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(frame, len);
-    if (om) {
-        ble_gatts_notify_custom(s_conn_handle, s_telem_val_handle, om);
+    /* A GATT notification carries at most ATT_MTU-3 bytes. Frames larger than
+     * that (big haptic telemetry) are split across consecutive notifications;
+     * the peer feeds every notification's bytes into its app_proto streaming
+     * parser, which reassembles across notification boundaries transparently.
+     * This makes telemetry work at any negotiated MTU, not just a large one. */
+    uint16_t mtu = ble_att_mtu(conn);
+    size_t chunk_max = (mtu > 3) ? (size_t)(mtu - 3) : 20;
+    for (size_t off = 0; off < len; off += chunk_max) {
+        size_t chunk = (len - off < chunk_max) ? (len - off) : chunk_max;
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(frame + off, chunk);
+        if (!om) {
+            ESP_LOGW(TAG, "notify: out of mbufs, dropped %u bytes", (unsigned)(len - off));
+            break;
+        }
+        /* ble_gatts_notify_custom consumes (frees) om on both success and
+         * failure, so never free it here. Stop the burst on error. */
+        if (ble_gatts_notify_custom(conn, s_telem_val_handle, om) != 0) {
+            break;
+        }
     }
 }
 
@@ -84,10 +107,18 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
         app_proto_feed(&s_parser, 0 /* transport = BLE */, buf, len, ble_cmd_cb, NULL);
         return 0;
     }
-    case BLE_GATT_ACCESS_OP_READ_CHR:
-        /* return the most recent outbound frame (telemetry/response) */
-        return os_mbuf_append(ctxt->om, s_last_tx, s_last_tx_len) == 0
+    case BLE_GATT_ACCESS_OP_READ_CHR: {
+        /* return the most recent outbound frame (telemetry/response); snapshot
+         * under the lock so we never append a frame torn by a concurrent sink */
+        uint8_t snap[APP_PROTO_MAX_FRAME];
+        size_t  snap_len;
+        portENTER_CRITICAL(&s_tx_mux);
+        snap_len = s_last_tx_len;
+        memcpy(snap, s_last_tx, snap_len);
+        portEXIT_CRITICAL(&s_tx_mux);
+        return os_mbuf_append(ctxt->om, snap, snap_len) == 0
                ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
     default:
         return BLE_ATT_ERR_UNLIKELY;
     }
@@ -201,9 +232,13 @@ int wireless_ble_start(const app_bus_t *bus, const char *device_name)
     ble_hs_cfg.sync_cb  = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
 
-    /* Telemetry frames can exceed the 23-byte default MTU; ask for more. The
-     * central must accept the negotiation for large notifications to fit. */
-    ble_att_set_preferred_mtu(247);
+    /* Telemetry frames can exceed the 23-byte default MTU; ask for more. A
+     * full 28-module haptic frame is 348 bytes (APP_PROTO_MAX_FRAME=409), and a
+     * GATT notification can carry only ATT_MTU-3 bytes, so request an MTU large
+     * enough for the biggest frame. The central must accept the negotiation for
+     * large notifications to fit; if it negotiates lower, oversized haptic
+     * telemetry will be truncated by the stack. */
+    ble_att_set_preferred_mtu(APP_PROTO_MAX_FRAME + 3);
 
     ble_svc_gap_init();
     ble_svc_gatt_init();

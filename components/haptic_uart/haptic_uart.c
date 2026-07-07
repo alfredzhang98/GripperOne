@@ -256,7 +256,9 @@ int haptic_uart_start(const haptic_uart_cfg_t *cfg, const app_bus_t *bus)
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     s_haptic_port = cfg->uart_port;
 
-    if (xTaskCreate(haptic_uart_task, "haptic_uart", 4096, ctx, 6, NULL) != pdPASS) {
+    uint32_t   stack = cfg->task_stack > 0 ? (uint32_t)cfg->task_stack : 4096;
+    UBaseType_t prio = cfg->task_prio  > 0 ? (UBaseType_t)cfg->task_prio : 6;
+    if (xTaskCreate(haptic_uart_task, "haptic_uart", stack, ctx, prio, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create haptic_uart_task");
         free(ctx);
         return ESP_FAIL;

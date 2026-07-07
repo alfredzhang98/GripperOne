@@ -1,6 +1,7 @@
 #include "app_supervisor.h"
 
 #include <string.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -21,9 +22,13 @@ static const char *TAG = "supervisor";
 #define HAPTIC_TIMEOUT_MS   500
 #define IMU_TIMEOUT_MS      500
 #define DEFAULT_TELEM_HZ    20
+/* Built-in default for the per-module SAFE_STOP force limit; overridable via
+ * app_supervisor_cfg_t.overforce_n (set in main from app_config.h). */
+#define OVERFORCE_N_DEFAULT 40.0f
 
 static const app_bus_t     *s_bus = NULL;
 static volatile app_state_t s_state = APP_STATE_INIT;
+static float                s_overforce_n = OVERFORCE_N_DEFAULT;
 
 /* session + streaming state (the "user layer" runtime) */
 static bool s_unlocked      = false;
@@ -38,6 +43,20 @@ static haptic_sample_t s_last_haptic;
 static motor_status_t  s_last_motor;
 
 const volatile app_state_t *app_supervisor_state_ptr(void) { return &s_state; }
+
+/* Largest per-module normal force magnitude in a sample, Newtons. A single
+ * hard contact is the crush hazard, so watch the peak module rather than the
+ * (possibly self-cancelling) sum. */
+static float haptic_peak_force(const haptic_sample_t *h)
+{
+    float peak = 0.0f;
+    uint16_t n = h->module_count > HAPTIC_MAX_MODULES ? HAPTIC_MAX_MODULES : h->module_count;
+    for (uint16_t i = 0; i < n; i++) {
+        float a = fabsf(h->force[i].fz);
+        if (a > peak) peak = a;
+    }
+    return peak;
+}
 
 static void enter_state(app_state_t next)
 {
@@ -243,6 +262,9 @@ static void supervisor_task(void *arg)
 
     app_cmd_t cmd;
     int haptic_silence_ms = 0, imu_silence_ms = 0, telem_accum_ms = 0;
+    /* Only watchdog a sensor once it has actually produced data. A sensor that
+     * was never present (e.g. bench-testing the motor alone) must not fault. */
+    bool haptic_seen = false, imu_seen = false;
 
     enter_state(APP_STATE_IDLE);
 
@@ -251,7 +273,17 @@ static void supervisor_task(void *arg)
 
         while (xQueueReceive(s_bus->haptic_q, &s_last_haptic, 0) == pdTRUE) {
             got_haptic = true;
-            /* TODO: over-force safety check -> SAFE_STOP */
+            /* Hard over-force cutoff: if the motor is driving and a tactile
+             * module reports a force well above any normal grip, stop before we
+             * crush the object (or the mechanism). */
+            float peak = haptic_peak_force(&s_last_haptic);
+            if (peak > s_overforce_n && s_last_motor.enabled &&
+                s_state != APP_STATE_SAFE_STOP && s_state != APP_STATE_ERROR) {
+                ESP_LOGE(TAG, "over-force %.1f N > %.1f N -> SAFE_STOP", peak, s_overforce_n);
+                motor_twai_disable();
+                gripper_stop();
+                enter_state(APP_STATE_SAFE_STOP);
+            }
         }
         while (xQueueReceive(s_bus->imu_q, &s_last_imu, 0) == pdTRUE) {
             got_imu = true;
@@ -281,11 +313,15 @@ static void supervisor_task(void *arg)
             if (s_stream_motor)  emit_motor();
         }
 
-        /* sensor-liveness watchdog */
+        /* sensor-liveness watchdog: only fault on a sensor that was seen alive
+         * and then went silent — never on one that has never streamed (bench). */
+        if (got_haptic) haptic_seen = true;
+        if (got_imu)    imu_seen    = true;
         haptic_silence_ms = got_haptic ? 0 : haptic_silence_ms + LOOP_PERIOD_MS;
         imu_silence_ms    = got_imu    ? 0 : imu_silence_ms + LOOP_PERIOD_MS;
-        if (s_state == APP_STATE_ACTIVE &&
-            (haptic_silence_ms > HAPTIC_TIMEOUT_MS || imu_silence_ms > IMU_TIMEOUT_MS)) {
+        bool haptic_lost = haptic_seen && haptic_silence_ms > HAPTIC_TIMEOUT_MS;
+        bool imu_lost    = imu_seen    && imu_silence_ms    > IMU_TIMEOUT_MS;
+        if (s_state == APP_STATE_ACTIVE && (haptic_lost || imu_lost)) {
             ESP_LOGE(TAG, "sensor timeout (haptic=%dms imu=%dms) -> SAFE_STOP",
                      haptic_silence_ms, imu_silence_ms);
             motor_twai_disable();
@@ -297,14 +333,20 @@ static void supervisor_task(void *arg)
     }
 }
 
-int app_supervisor_start(const app_bus_t *bus)
+int app_supervisor_start(const app_bus_t *bus, const app_supervisor_cfg_t *cfg)
 {
     if (!bus) {
         return ESP_ERR_INVALID_ARG;
     }
     s_bus = bus;
 
-    if (xTaskCreate(supervisor_task, "supervisor", 4096, NULL, 5, NULL) != pdPASS) {
+    int  task_stack = cfg ? cfg->task_stack : 0;
+    int  task_prio  = cfg ? cfg->task_prio  : 0;
+    if (cfg && cfg->overforce_n > 0.0f) s_overforce_n = cfg->overforce_n;
+
+    uint32_t   stack = task_stack > 0 ? (uint32_t)task_stack : 4096;
+    UBaseType_t prio = task_prio  > 0 ? (UBaseType_t)task_prio : 5;
+    if (xTaskCreate(supervisor_task, "supervisor", stack, NULL, prio, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create supervisor_task");
         return ESP_FAIL;
     }

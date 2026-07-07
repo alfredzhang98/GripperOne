@@ -28,6 +28,10 @@ typedef struct {
     int tx_gpio;
     int rx_gpio;
     int bitrate_kbps;   /* 125 / 250 / 500 / 1000 */
+    int esc_id;         /* host->motor command frame ID (<0 = built-in default) */
+    int mst_id;         /* motor->host feedback frame ID (<0 = built-in default) */
+    int task_stack;     /* task stack depth, bytes (0 = built-in default) */
+    int task_prio;      /* FreeRTOS priority       (0 = built-in default) */
 } motor_twai_cfg_t;
 
 /**

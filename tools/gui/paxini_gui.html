@@ -68,7 +68,7 @@
   .dot.live{background:var(--good);box-shadow:0 0 8px 1px color-mix(in srgb,var(--good) 70%,transparent)}
   .dot.warnc{background:var(--warn)} .dot.badc{background:var(--bad)}
   .iconbtn{padding:7px 10px;line-height:1}
-  .work{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,1fr);gap:14px;padding:14px;flex:1}
+  .work{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,1fr);gap:14px;padding:14px;flex:1;align-items:start}
   @media(max-width:940px){.work{grid-template-columns:1fr}}
   .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;min-width:0}
   .phead{display:flex;align-items:center;gap:10px;padding:11px 15px;border-bottom:1px solid var(--line)}
@@ -76,7 +76,7 @@
   .phead .r{margin-left:auto;display:flex;gap:8px;align-items:center}
   .tag{font-family:var(--mono);font-size:11px;color:var(--muted)}
   .col{display:flex;flex-direction:column;gap:14px;min-width:0}
-  .mapwrap{position:relative;flex:1;min-height:360px;padding:10px}
+  .mapwrap{position:relative;height:440px;padding:10px}
   #map{width:100%;height:100%;display:block;border-radius:8px}
   .legend{display:flex;align-items:center;gap:10px;padding:0 15px 12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
   .ramp{height:9px;flex:1;border-radius:5px;border:1px solid var(--line)}
@@ -99,6 +99,12 @@
   .ctl button{flex:1 1 auto}
   .kv{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:3px 15px;color:var(--muted)}
   .kv b{color:var(--text);font-weight:600}
+  .fgrid{display:flex;flex-direction:column;gap:5px;padding:12px 15px}
+  .frow{display:flex;align-items:center;gap:5px}
+  .flabel{width:48px;font-size:12px;color:var(--muted);font-family:var(--mono)}
+  .fcell{width:26px;height:24px;display:flex;align-items:center;justify-content:center;font-size:11px;font-family:var(--mono);color:var(--faint);background:var(--surface-2);border:1px solid var(--line);border-radius:5px}
+  .fcell.sm{width:22px}
+  .fcell.on{color:#04110f;background:var(--good);border-color:var(--good);font-weight:700}
   .log{font-family:var(--mono);font-size:11.5px;line-height:1.5;padding:10px 14px;height:150px;overflow:auto;background:var(--bg);border-top:1px solid var(--line);border-radius:0 0 var(--r) var(--r);white-space:pre-wrap;word-break:break-all}
   .log .t{color:var(--muted)} .log .rx{color:var(--accent)} .log .tx{color:var(--warn)} .log .er{color:var(--bad)} .log .ok{color:var(--good)}
   .foot{padding:8px 18px;color:var(--muted);font-size:11px;font-family:var(--mono);border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;background:var(--surface)}
@@ -118,6 +124,7 @@
     <button id="connect" class="primary">连接串口 Connect</button>
     <button id="stream" disabled>开始 Start Stream</button>
     <button id="zero" class="warn" disabled>标定 Zero</button>
+    <button id="detect">检查手指 Detect</button>
     <div class="spacer"></div>
     <span class="pill"><span class="dot" id="stateDot"></span><span id="stateTxt">Idle</span></span>
     <span class="pill"><span id="model">CP-M3025 · 77 pts</span></span>
@@ -142,6 +149,15 @@
     </section>
 
     <div class="col">
+      <section class="panel">
+        <div class="phead"><h2>Finger Sensors 手指传感器</h2>
+          <div class="r"><span class="tag" id="connCount">— 连接</span></div>
+        </div>
+        <div id="fingerGrid" class="fgrid"></div>
+        <div class="kv"><span>connected 已连接</span><b id="connList">—</b></div>
+        <div class="kv"><span>提示</span><b style="color:var(--muted);font-weight:400">点“检查手指”读连接状态（0x10–0x13）</b></div>
+      </section>
+
       <section class="panel">
         <div class="phead"><h2>Resultant Force 合力</h2><div class="r"><span class="tag" id="rate">0.0 Hz</span></div></div>
         <div class="rf" aria-hidden="true">
@@ -202,8 +218,24 @@ const S={
   streaming:false, demo:!("serial" in navigator), recording:false,
   csv:[], recN:0, MAXROWS:300000,
   trFx:[], trFy:[], trFz:[], TRN:240,
+  connected:new Set(), ptCount:{},        // which finger-segments are connected + their distributed point counts
+  rxDebug:false,                          // when true, log raw RX bytes (used during a finger scan)
 };
 const PROTO={content:3};
+
+/* ---------- finger/segment model (fixed 28-module order of the 通信盒) ----------
+ * Auto-push concatenates modules in this exact order, connected ones only:
+ *   大拇指→食指→中指→无名指→小拇指→掌心, each finger 近节→中节→指尖→指甲.
+ * Connection status: registers 0x10-0x13, one bit per segment (Hand_UI.py).
+ * Distributed point-count per segment: registers 0x30-0x67 (uint16). */
+const SEGS=['近节','中节','指尖','指甲'];
+const MODULES=[];
+const FDEF=[['大拇指',0x10,0,0x30],['食指',0x10,4,0x38],['中指',0x11,0,0x40],['无名指',0x11,4,0x48],['小拇指',0x12,0,0x50]];
+for(const [finger,sReg,sBit0,pBase] of FDEF)
+  for(let s=0;s<4;s++) MODULES.push({name:finger+SEGS[s],finger,sReg,sBit:sBit0+s,pAddr:pBase+s*2});
+const PALM_P=[0x66,0x64,0x62,0x60,0x5E,0x5C,0x5A,0x58]; // 掌心1..8 point-count addrs (reversed per protocol)
+for(let p=0;p<8;p++)
+  MODULES.push({name:'掌心'+(p+1),finger:'掌心',sReg:p<4?0x12:0x13,sBit:p<4?(4+p):(p-4),pAddr:PALM_P[p]});
 
 /* ---------- logging ---------- */
 function log(cls,msg){
@@ -224,6 +256,12 @@ const REQ={
   content :b =>buildReq(0x10,0x0016,[b&0xff]),
   zero    :()=>buildReq(0x17,0x0002,[1]),
 };
+/* Read request (func 0x03): the length field carries the READ length, no data. */
+function buildReadReq(addr,rl){
+  const f=[0x55,0xAA,0x00,0x03,addr&0xff,(addr>>8)&0xff,rl&0xff,(rl>>8)&0xff];
+  f.push(lrc(f)); return new Uint8Array(f);
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 /* ---------- serial ---------- */
 let port=null, reader=null, writer=null, rxbuf=new Uint8Array(0), keepReading=false, connecting=false;
@@ -240,12 +278,21 @@ async function connect(){
   try{
     p=await navigator.serial.requestPort();
     await p.open({baudRate:parseInt($("baud").value,10)});
+    /* pyserial asserts DTR+RTS on open; Web Serial leaves them low, which some
+     * 通信盒/USB bridges need high to transmit/receive. Match pyserial. */
+    try{ await p.setSignals({dataTerminalReady:true, requestToSend:true}); }catch(_){}
     writer=p.writable.getWriter();
     port=p; S.demo=false; $("demoBanner").style.display='none';
     setState('live','Connected'); $("connect").textContent='断开 Disconnect';
     $("stream").disabled=false; $("zero").disabled=false; $("record").disabled=false; $("demo").disabled=true;
     log('ok','Serial opened @ '+$("baud").value+' 8N1');
     keepReading=true; readLoop();
+    /* Connectivity probe: read the version register (0x0000). Any reply proves
+     * the port + wiring are right; total silence means wrong port or dead link. */
+    S.rxDebug=true;
+    try{ const v=await readReg(0x0000,15); log('ok','设备有应答 ✓ 版本='+hex(v)); }
+    catch(e){ log('er','连接后探测无应答：'+e.message+'。请确认①选的是“通信盒”的串口而不是 ESP32；②盒子已单独供电；③先用厂家 Hand_UI.py 在同串口能读到'); }
+    S.rxDebug=false;
   }catch(e){
     log('er','open failed: '+e.message);
     try{ if(writer){writer.releaseLock();} }catch(_){}
@@ -282,7 +329,7 @@ async function readLoop(){
     while(keepReading){
       const {value,done}=await reader.read();
       if(done) break;
-      if(value&&value.length){ appendRx(value); parseStream(); }
+      if(value&&value.length){ if(S.rxDebug) log('rx','RX '+hex(value.subarray(0,Math.min(value.length,40)))); appendRx(value); parseStream(); }
     }
   }catch(e){ if(keepReading) lostConnection(e.message||'read error'); }
   finally{ try{reader.releaseLock();}catch(_){} }
@@ -297,19 +344,51 @@ function appendRx(chunk){
   rxbuf=n;
 }
 
-/* ---------- auto-push frame parser (head AA 56) ---------- */
+/* ---------- stream parser: auto-push (AA 56) + read/write response (AA 55) ---------- */
 function parseStream(){
   let i=0;
-  while(rxbuf.length-i>=6){
-    if(rxbuf[i]!==0xAA||rxbuf[i+1]!==0x56){ i++; continue; }
-    const vlen=rxbuf[i+3]|(rxbuf[i+4]<<8), frameLen=vlen+6;
-    if(vlen===0||frameLen>16384){ i++; continue; }
-    if(rxbuf.length-i<frameLen) break;
-    const frame=rxbuf.subarray(i,i+frameLen);
-    if(lrc(frame.subarray(0,frameLen-1))!==frame[frameLen-1]){ i++; continue; }
-    onFrame(frame[5], frame.subarray(6, 6+(vlen-1))); i+=frameLen;
+  while(rxbuf.length-i>=2){
+    if(rxbuf[i]===0xAA && rxbuf[i+1]===0x56){                  // auto-push data
+      if(rxbuf.length-i<6) break;
+      const vlen=rxbuf[i+3]|(rxbuf[i+4]<<8), frameLen=vlen+6;
+      if(vlen===0||frameLen>16384){ i++; continue; }
+      if(rxbuf.length-i<frameLen) break;
+      const frame=rxbuf.subarray(i,i+frameLen);
+      if(lrc(frame.subarray(0,frameLen-1))!==frame[frameLen-1]){ i++; continue; }
+      onFrame(frame[5], frame.subarray(6, 6+(vlen-1))); i+=frameLen;
+    } else if(rxbuf[i]===0xAA && rxbuf[i+1]===0x55){           // read/write response
+      if(rxbuf.length-i<9) break;                              // header(8)+LRC(1) minimum
+      const dlen=rxbuf[i+6]|(rxbuf[i+7]<<8), frameLen=8+dlen+1;
+      if(frameLen>16384){ i++; continue; }
+      if(rxbuf.length-i<frameLen) break;
+      const frame=rxbuf.subarray(i,i+frameLen);
+      if(lrc(frame.subarray(0,frameLen-1))!==frame[frameLen-1]){ i++; continue; }
+      onResp(frame[3], frame[4]|(frame[5]<<8), frame.subarray(8,8+dlen)); i+=frameLen;
+    } else { i++; }
   }
   if(i>0) rxbuf=rxbuf.slice(i);
+}
+
+/* ---------- register read (request/response over the same stream) ---------- */
+let pendingRead=null;   // {addr, resolve, reject, timer} — at most one in flight
+function onResp(func,addr,data){
+  /* Reads are strictly sequential (one in flight), so resolve the pending read
+   * on ANY AA 55 response — do NOT require the echoed addr to match (some boxes
+   * echo a different/zero addr, which would otherwise hang as a timeout). */
+  if(pendingRead){
+    clearTimeout(pendingRead.timer); const r=pendingRead.resolve; pendingRead=null; r(data);
+  }
+}
+function readReg(addr,len){
+  return new Promise((resolve,reject)=>{
+    if(!writer){ reject(new Error('未连接')); return; }
+    if(pendingRead){ clearTimeout(pendingRead.timer); pendingRead.reject(new Error('superseded')); }
+    const timer=setTimeout(()=>{ if(pendingRead&&pendingRead.addr===addr){ pendingRead=null; reject(new Error('timeout（rxbuf='+rxbuf.length+'B，无 AA55 应答）')); } },800);
+    pendingRead={addr,resolve,reject,timer};
+    write(buildReadReq(addr,len),'read 0x'+addr.toString(16)).then(ok=>{
+      if(!ok&&pendingRead&&pendingRead.addr===addr){ clearTimeout(timer); pendingRead=null; reject(new Error('write failed')); }
+    });
+  });
 }
 const i8=v=>v>127?v-256:v;
 function onFrame(errByte, payload){
@@ -470,6 +549,59 @@ $("stream").onclick=async()=>{
   }
 };
 $("zero").onclick=async()=>{ if(S.demo){log('t','Demo: 标定（模拟）');return;} if(await write(REQ.zero(),'标定/zero')) log('ok','标定指令已发送'); };
+
+/* ---------- finger connection detection ---------- */
+function renderFingers(){
+  const grid=$("fingerGrid"); if(!grid) return; let html='';
+  const AB=['近','中','尖','甲'];   // distinct abbreviations for 近节/中节/指尖/指甲
+  for(const fn of ['大拇指','食指','中指','无名指','小拇指']){
+    html+=`<div class="frow"><span class="flabel">${fn}</span>`;
+    for(let s=0;s<4;s++){ const nm=fn+SEGS[s], on=S.connected.has(nm), pc=S.ptCount[nm];
+      html+=`<span class="fcell ${on?'on':''}" title="${nm}${on?(' 已连接'+(pc?(' · '+pc+'点'):'')):' 未连接'}">${AB[s]}</span>`; }
+    html+='</div>';
+  }
+  html+=`<div class="frow"><span class="flabel">掌心</span>`;
+  for(let p=1;p<=8;p++){ const nm='掌心'+p, on=S.connected.has(nm);
+    html+=`<span class="fcell sm ${on?'on':''}" title="${nm}${on?' 已连接':' 未连接'}">${p}</span>`; }
+  html+='</div>';
+  grid.innerHTML=html;
+  const list=[...S.connected];
+  $("connCount").textContent=list.length+' 连接';
+  $("connList").textContent=list.length?list.join('、'):'—';
+}
+async function detectFingers(){
+  if(S.demo){ S.connected=new Set(['食指指尖','中指指尖']); S.ptCount={'食指指尖':77,'中指指尖':77};
+    renderFingers(); log('t','Demo：模拟 食指指尖 + 中指指尖 已连接'); return; }
+  if(!writer){ log('t','请先连接串口（或用 Demo）'); return; }
+  $("detect").disabled=true;
+  const wasStreaming=S.streaming;
+  try{
+    /* Always silence auto-push before reading registers — a prior session (or the
+     * ESP32) may have left the box streaming, which would bury the AA55 replies. */
+    await write(REQ.autopush(0),'auto-push off (scan)');
+    if(wasStreaming){ S.streaming=false; $("stream").textContent='开始 Start Stream'; }
+    S.rxDebug=true;
+    await sleep(150); rxbuf=new Uint8Array(0);          // let the stream drain, then start clean
+    const conn=new Set();
+    for(const reg of [0x10,0x11,0x12,0x13]){
+      try{
+        const d=await readReg(reg,1); const b=d[0]||0;
+        log('rx',`状态 0x${reg.toString(16).padStart(2,'0')} = 0b${b.toString(2).padStart(8,'0')}`);
+        for(const m of MODULES) if(m.sReg===reg && (b&(1<<m.sBit))) conn.add(m.name);
+      }catch(e){ log('er',`读状态 0x${reg.toString(16)} 失败：${e.message}`); }
+    }
+    S.connected=conn; S.ptCount={};
+    for(const m of MODULES){ if(conn.has(m.name)){ try{ const d=await readReg(m.pAddr,2); S.ptCount[m.name]=d[0]|(d[1]<<8); }catch(_){}} }
+    renderFingers();
+    log('ok',`检测完成：${conn.size} 个模块 — ${[...conn].join('、')||'无'}`);
+  }finally{
+    S.rxDebug=false;
+    if(wasStreaming){ await write(REQ.content(PROTO.content),'set content'); await write(REQ.autopush(1),'auto-push on');
+      S.streaming=true; $("stream").textContent='停止 Stop Stream'; }
+    $("detect").disabled=false;
+  }
+}
+$("detect").onclick=detectFingers;
 $("content").onchange=async()=>{ PROTO.content=parseInt($("content").value,10);
   if(S.streaming) await write(REQ.content(PROTO.content),'set content 0x16='+PROTO.content); };  // keep device+parser in sync
 $("cols").oninput=e=>S.cols=clamp(numOr(e.target.value,11)|0,1,40);
@@ -497,6 +629,7 @@ $("theme").onclick=()=>{ const cur=document.documentElement.getAttribute('data-t
 if(!("serial" in navigator)){ setState('warn','Demo'); $("demo").setAttribute('aria-pressed','true'); $("demo").textContent='■ 演示中 Demo'; log('t','Web Serial 不可用 → 演示模式'); }
 else { $("demoBanner").style.display='none'; log('t','就绪。点“连接串口”选择通信盒串口。'); }
 $("fsLbl").textContent=S.fsN+' N';
+renderFingers();
 requestAnimationFrame(loop);
 </script>
 

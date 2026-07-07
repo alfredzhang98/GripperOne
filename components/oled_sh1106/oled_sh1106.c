@@ -164,7 +164,9 @@ int oled_start(const oled_cfg_t *cfg, const app_bus_t *bus,
         /* Do not abort the whole firmware over an optional display. */
     }
 
-    if (xTaskCreate(oled_task, "oled", 3072, c, 3, NULL) != pdPASS) {
+    uint32_t   stack = cfg->task_stack > 0 ? (uint32_t)cfg->task_stack : 3072;
+    UBaseType_t prio = cfg->task_prio  > 0 ? (UBaseType_t)cfg->task_prio : 3;
+    if (xTaskCreate(oled_task, "oled", stack, c, prio, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create oled_task");
         free(c);
         return ESP_FAIL;

@@ -19,12 +19,19 @@
 extern "C" {
 #endif
 
+typedef struct {
+    int   task_stack;   /* task stack depth, bytes (0 = built-in default) */
+    int   task_prio;    /* FreeRTOS priority       (0 = built-in default) */
+    float overforce_n;  /* per-module force forcing SAFE_STOP (<=0 = default) */
+} app_supervisor_cfg_t;
+
 /**
  * @brief Spawn supervisor_task.
  * @param bus  message bus it will drain.
+ * @param cfg  task sizing + safety limits (may be NULL for all defaults).
  * @return ESP_OK on success.
  */
-int app_supervisor_start(const app_bus_t *bus);
+int app_supervisor_start(const app_bus_t *bus, const app_supervisor_cfg_t *cfg);
 
 /**
  * @brief Read-only pointer to the current system state (for the OLED, etc.).

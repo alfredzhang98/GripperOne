@@ -206,7 +206,9 @@ int imu_uart_start(const imu_uart_cfg_t *cfg, const app_bus_t *bus)
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     s_imu_port = cfg->uart_port;
 
-    if (xTaskCreate(imu_uart_task, "imu_uart", 4096, ctx, 6, NULL) != pdPASS) {
+    uint32_t   stack = cfg->task_stack > 0 ? (uint32_t)cfg->task_stack : 4096;
+    UBaseType_t prio = cfg->task_prio  > 0 ? (UBaseType_t)cfg->task_prio : 6;
+    if (xTaskCreate(imu_uart_task, "imu_uart", stack, ctx, prio, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create imu_uart_task");
         free(ctx);
         return ESP_FAIL;

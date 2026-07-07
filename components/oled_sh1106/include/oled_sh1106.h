@@ -27,6 +27,8 @@ typedef struct {
     int      scl_gpio;
     uint32_t freq_hz;
     uint8_t  addr;      /* 7-bit I2C address, typically 0x3C */
+    int      task_stack;/* task stack depth, bytes (0 = built-in default) */
+    int      task_prio; /* FreeRTOS priority       (0 = built-in default) */
 } oled_cfg_t;
 
 /**

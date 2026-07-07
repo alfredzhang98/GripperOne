@@ -332,7 +332,12 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 - **控制特征** `...0002`（Write / Write-No-Response）：上位机把上面的**命令帧**写进来
 - **遥测特征** `...0003`（Read / Notify）：设备把**响应/遥测帧**通过 Notify 推出来；Read 可取最近一帧
 
-注意：遥测帧可能超过 BLE 默认 23 字节 MTU，固件已 `ble_att_set_preferred_mtu(247)` 请求更大 MTU，需中心端（手机/PC）协商接受。
+注意：遥测帧可能超过 BLE 默认 23 字节 MTU（满配 28 模块的触觉帧达 348 字节，而单条 Notify 只能携带 ATT_MTU−3 字节）。固件做了两层处理:
+
+1. 请求更大的 MTU:`ble_att_set_preferred_mtu(APP_PROTO_MAX_FRAME + 3)`（约 412 字节),中心端协商接受后单条 Notify 即可放下最大帧;
+2. **应用层分片兜底**:即使中心端只协商到较小 MTU,固件也会按当前 `ble_att_mtu()` 把一帧拆成多条 Notify 连续发出。
+
+因此中心端(手机/PC)务必把**遥测特征的 Notify 数据当作字节流**顺序拼接后再喂给流式解析器(app_proto),而不是把每条 Notify 当成一个完整帧——解析器靠 SOF+长度+CRC 自动重组,跨 Notify 边界无感。
 
 ## 九、安全边界（重要）
 
