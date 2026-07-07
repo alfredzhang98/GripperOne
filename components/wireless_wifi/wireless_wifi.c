@@ -12,9 +12,11 @@ int wireless_wifi_start(const app_bus_t *bus)
      *   1. esp_netif_init(); esp_event_loop_create_default();
      *   2. esp_netif_create_default_wifi_sta();
      *   3. esp_wifi_init(&cfg); set WIFI_MODE_STA; set SSID/pass; esp_wifi_start();
-     *   4. On IP_EVENT_STA_GOT_IP, start a TCP/UDP or HTTP control server that
-     *      translates network messages into ctrl_msg_t on bus->ctrl_q
-     *      (mirroring wireless_ble).
+     *   4. On IP_EVENT_STA_GOT_IP, accept a TCP socket and, for each RX chunk,
+     *      call app_proto_feed(&parser, 1 (transport=Wi-Fi), data, len, cb, NULL)
+     *      exactly like wireless_ble — cb posts app_cmd_t to bus->ctrl_q. Also
+     *      app_proto_set_sink(wifi_send, sock) on connect so telemetry/responses
+     *      go back over the socket. This reuses the SAME user protocol as BLE.
      *
      * Kept as a logged no-op so the component compiles and the feature flag
      * (APP_ENABLE_WIFI) can be flipped on later without restructuring.

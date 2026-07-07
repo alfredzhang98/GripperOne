@@ -33,6 +33,12 @@ typedef struct {
  */
 int imu_uart_start(const imu_uart_cfg_t *cfg, const app_bus_t *bus);
 
+/** @brief Run the IMU's built-in accel/gyro self-calibration (keep it still). */
+void imu_uart_calibrate(void);
+
+/** @brief Zero the yaw / Z-axis angle reference. */
+void imu_uart_set_zero(void);
+
 #ifdef __cplusplus
 }
 #endif

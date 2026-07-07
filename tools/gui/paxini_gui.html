@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PaXini Tactile Console — PX-6AX GEN3</title>
+<style>html,body{background:#0b0e12}</style>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#0b0e12; --surface:#141a21; --surface-2:#1b232c; --line:#242f3a;
+    --text:#cdd8e3; --muted:#8494a3; --faint:#5a6b7c;
+    --accent:#34e5d0;
+    --good:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --fx:#f0a35a; --fy:#8f80f2;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --r:10px;
+  }
+  @media (prefers-color-scheme:light){
+    :root{
+      --bg:#eef1f4; --surface:#ffffff; --surface-2:#f3f6f9; --line:#dde4ea;
+      --text:#1b2732; --muted:#566473; --faint:#7d8b99;
+      --accent:#0f9e90;
+      --good:#0f9e6e; --warn:#b45309; --bad:#dc2626;
+      --fx:#c06a1e; --fy:#5b4bd0;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f4; --surface:#ffffff; --surface-2:#f3f6f9; --line:#dde4ea;
+    --text:#1b2732; --muted:#566473; --faint:#7d8b99;
+    --accent:#0f9e90;
+    --good:#0f9e6e; --warn:#b45309; --bad:#dc2626;
+    --fx:#c06a1e; --fy:#5b4bd0;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b0e12; --surface:#141a21; --surface-2:#1b232c; --line:#242f3a;
+    --text:#cdd8e3; --muted:#8494a3; --faint:#5a6b7c;
+    --accent:#34e5d0;
+    --good:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --fx:#f0a35a; --fy:#8f80f2;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .app{display:flex;flex-direction:column;min-height:100vh}
+  .bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 18px;background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  .brand{display:flex;align-items:baseline;gap:10px;margin:0 6px 0 0;font-size:15px;font-weight:600;letter-spacing:.02em}
+  .brand span{font-size:11px;color:var(--muted);font-family:var(--mono);font-weight:400}
+  .spacer{flex:1}
+  .field{display:flex;flex-direction:column;gap:3px}
+  .field label{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+  select,input[type=number]{background:var(--surface-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:6px 9px;font-family:var(--mono);font-size:13px;min-width:70px}
+  input[type=number]{width:64px}
+  button{background:var(--surface-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:7px 13px;font-family:var(--sans);font-size:13px;font-weight:550;cursor:pointer;transition:border-color .15s,background .15s,color .15s}
+  button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent);color:#04110f;border-color:var(--accent)}
+  button.primary:hover:not(:disabled){filter:brightness(1.08);color:#04110f}
+  button.warn:hover:not(:disabled){border-color:var(--warn);color:var(--warn)}
+  button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,var(--surface-2))}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button.primary:focus-visible{outline-color:var(--text)}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+  .dot.live{background:var(--good);box-shadow:0 0 8px 1px color-mix(in srgb,var(--good) 70%,transparent)}
+  .dot.warnc{background:var(--warn)} .dot.badc{background:var(--bad)}
+  .iconbtn{padding:7px 10px;line-height:1}
+  .work{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,1fr);gap:14px;padding:14px;flex:1}
+  @media(max-width:940px){.work{grid-template-columns:1fr}}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;min-width:0}
+  .phead{display:flex;align-items:center;gap:10px;padding:11px 15px;border-bottom:1px solid var(--line)}
+  .phead h2{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600}
+  .phead .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .tag{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .col{display:flex;flex-direction:column;gap:14px;min-width:0}
+  .mapwrap{position:relative;flex:1;min-height:360px;padding:10px}
+  #map{width:100%;height:100%;display:block;border-radius:8px}
+  .legend{display:flex;align-items:center;gap:10px;padding:0 15px 12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .ramp{height:9px;flex:1;border-radius:5px;border:1px solid var(--line)}
+  .mapcfg{display:flex;gap:14px;align-items:flex-end;padding:0 15px 12px;flex-wrap:wrap}
+  .chk{flex-direction:row;align-items:center;gap:7px;padding-bottom:4px;font-size:12px;color:var(--muted)}
+  .rf{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border-radius:8px;overflow:hidden;margin:12px}
+  .axis{background:var(--surface-2);padding:12px 12px 14px;display:flex;flex-direction:column;gap:6px}
+  .axis .k{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);display:flex;align-items:center;gap:6px}
+  .axis .k i{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .axis .v{font-family:var(--mono);font-size:23px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .axis .u{font-size:11px;color:var(--muted);font-family:var(--mono)}
+  .track{height:5px;border-radius:3px;background:var(--surface);overflow:hidden;position:relative;margin-top:2px}
+  .track i{position:absolute;top:0;bottom:0;background:var(--accent);transition:width .08s,left .08s}
+  .tracewrap{padding:0 12px 12px}
+  #trace{width:100%;height:120px;display:block}
+  .tlegend{display:flex;gap:14px;padding:0 14px 10px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .tlegend b{display:inline-flex;align-items:center;gap:5px;font-weight:400}
+  .tlegend i{width:12px;height:3px;border-radius:2px;display:inline-block}
+  .ctl{display:flex;flex-wrap:wrap;gap:8px;padding:12px}
+  .ctl button{flex:1 1 auto}
+  .kv{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:3px 15px;color:var(--muted)}
+  .kv b{color:var(--text);font-weight:600}
+  .log{font-family:var(--mono);font-size:11.5px;line-height:1.5;padding:10px 14px;height:150px;overflow:auto;background:var(--bg);border-top:1px solid var(--line);border-radius:0 0 var(--r) var(--r);white-space:pre-wrap;word-break:break-all}
+  .log .t{color:var(--muted)} .log .rx{color:var(--accent)} .log .tx{color:var(--warn)} .log .er{color:var(--bad)} .log .ok{color:var(--good)}
+  .foot{padding:8px 18px;color:var(--muted);font-size:11px;font-family:var(--mono);border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;background:var(--surface)}
+  .banner{background:color-mix(in srgb,var(--warn) 16%,var(--surface));border:1px solid color-mix(in srgb,var(--warn) 45%,var(--line));color:var(--text);font-size:12px;padding:8px 14px;border-radius:8px;margin:12px 14px 0;font-family:var(--mono)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="app">
+  <header class="bar">
+    <h1 class="brand">PaXini Tactile Console <span>PX-6AX GEN3 · 通信盒/HAND</span></h1>
+    <div class="field"><label for="baud">Baud 波特率</label>
+      <select id="baud"><option>921600</option><option>115200</option><option>460800</option><option>9600</option></select>
+    </div>
+    <div class="field"><label for="content">Content 内容</label>
+      <select id="content"><option value="3">合力+分布力</option><option value="2">仅分布力</option><option value="1">仅合力</option></select>
+    </div>
+    <button id="connect" class="primary">连接串口 Connect</button>
+    <button id="stream" disabled>开始 Start Stream</button>
+    <button id="zero" class="warn" disabled>标定 Zero</button>
+    <div class="spacer"></div>
+    <span class="pill"><span class="dot" id="stateDot"></span><span id="stateTxt">Idle</span></span>
+    <span class="pill"><span id="model">CP-M3025 · 77 pts</span></span>
+    <span class="pill"><span id="fps">0 fps</span></span>
+    <button class="iconbtn" id="theme" title="切换明暗主题" aria-label="Toggle light/dark theme">◐</button>
+  </header>
+
+  <div class="work">
+    <section class="panel">
+      <div class="phead"><h2>Tactile Force Map 触觉力图</h2>
+        <div class="r"><span class="tag" id="peak">peak 0.0 N</span><span class="tag" id="npts">77 pts</span></div>
+      </div>
+      <div id="demoBanner" class="banner">演示数据 — 未检测到 Web Serial / 未连接硬件。在 Chrome/Edge 中<b>本地打开</b>本文件并点“连接串口”接真机。</div>
+      <div class="mapcfg">
+        <div class="field"><label for="cols">Cols 列</label><input type="number" id="cols" value="11" min="1" max="40"></div>
+        <div class="field"><label for="rows">Rows 行</label><input type="number" id="rows" value="7" min="1" max="40"></div>
+        <div class="field"><label for="fsN">Fz full-scale (N)</label><input type="number" id="fsN" value="10" min="1" max="25" step="1"></div>
+        <label class="field chk"><input type="checkbox" id="vectors" checked> 切向矢量 Fxy</label>
+      </div>
+      <div class="mapwrap"><canvas id="map" role="img" aria-label="Tactile force map, live"></canvas></div>
+      <div class="legend"><span>0 N</span><div class="ramp" id="ramp"></div><span id="fsLbl">10 N</span></div>
+    </section>
+
+    <div class="col">
+      <section class="panel">
+        <div class="phead"><h2>Resultant Force 合力</h2><div class="r"><span class="tag" id="rate">0.0 Hz</span></div></div>
+        <div class="rf" aria-hidden="true">
+          <div class="axis"><div class="k"><i style="background:var(--fx)"></i>Fx <span class="u">切向</span></div><div class="v" id="fx">0.00</div><div class="track"><i id="fxb"></i></div></div>
+          <div class="axis"><div class="k"><i style="background:var(--fy)"></i>Fy <span class="u">切向</span></div><div class="v" id="fy">0.00</div><div class="track"><i id="fyb"></i></div></div>
+          <div class="axis"><div class="k"><i style="background:var(--accent)"></i>Fz <span class="u">法向</span></div><div class="v" id="fz">0.00</div><div class="track"><i id="fzb"></i></div></div>
+        </div>
+        <p id="summary" class="vh" aria-live="polite"></p>
+        <div class="tracewrap"><canvas id="trace" role="img" aria-label="Resultant force time trace"></canvas></div>
+        <div class="tlegend"><b><i style="background:var(--accent)"></i>Fz</b><b><i style="background:var(--fx)"></i>Fx</b><b><i style="background:var(--fy)"></i>Fy</b></div>
+        <div class="kv"><span>sensor status 状态</span><b id="errv">—</b></div>
+        <div class="kv"><span>frames 帧</span><b id="frames">0</b></div>
+      </section>
+
+      <section class="panel">
+        <div class="phead"><h2>Control &amp; Capture 控制与采集</h2></div>
+        <div class="ctl">
+          <button id="record" disabled>● 录制 Record CSV</button>
+          <button id="download" disabled>下载 Download CSV</button>
+          <button id="clearlog">清空日志 Clear</button>
+          <button id="demo" aria-pressed="false">演示 Demo</button>
+        </div>
+        <div class="kv"><span>captured rows 行</span><b id="rows2">0</b></div>
+        <div class="log" id="log" role="log" aria-label="Event log"></div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>请求 <b style="color:var(--text)">55 AA</b> · 应答 <b style="color:var(--text)">AA 55</b> · 自动回传 <b style="color:var(--text)">AA 56</b> · LRC=~Σ+1</span>
+    <span>合力 int16LE ×0.1N · 分布力/点 Fx,Fy(int8) Fz(uint8) ×0.1N</span>
+    <span class="spacer"></span><span>Web Serial · Chrome/Edge</span>
+  </footer>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const numOr=(v,def)=>{const n=parseFloat(v);return Number.isFinite(n)?n:def;};
+const reducedMotion=matchMedia('(prefers-reduced-motion:reduce)');
+
+/* ---------- thermal ramp (magnitude -> color), independent of accent ---------- */
+const STOPS=[[10,14,20],[30,64,140],[20,150,190],[40,200,120],[240,205,60],[240,90,60]];
+function ramp(t){
+  t=clamp(t,0,1)*(STOPS.length-1); const i=Math.floor(t), f=t-i;
+  const a=STOPS[i], b=STOPS[Math.min(i+1,STOPS.length-1)];
+  return `rgb(${a[0]+(b[0]-a[0])*f|0},${a[1]+(b[1]-a[1])*f|0},${a[2]+(b[2]-a[2])*f|0})`;
+}
+(function(){let s=[];for(let i=0;i<=6;i++)s.push(ramp(i/6)+" "+(i/6*100).toFixed(0)+"%");
+  $("ramp").style.background=`linear-gradient(90deg,${s.join(",")})`;})();
+
+/* ---------- state ---------- */
+const S={
+  points:new Array(77).fill(0).map(()=>({fx:0,fy:0,fz:0})), n:77,
+  res:{fx:0,fy:0,fz:0}, err:0, frames:0,
+  cols:11, rows:7, fsN:10, vectors:true,
+  streaming:false, demo:!("serial" in navigator), recording:false,
+  csv:[], recN:0, MAXROWS:300000,
+  trFx:[], trFy:[], trFz:[], TRN:240,
+};
+const PROTO={content:3};
+
+/* ---------- logging ---------- */
+function log(cls,msg){
+  const el=$("log"), t=new Date().toLocaleTimeString('en-GB');
+  el.insertAdjacentHTML('beforeend',`<span class="t">${t}</span> <span class="${cls}">${msg}</span>\n`);
+  el.scrollTop=el.scrollHeight; if(el.childNodes.length>400) el.removeChild(el.firstChild);
+}
+const hex=b=>Array.from(b).map(x=>x.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+
+/* ---------- 通信盒 protocol (verified byte-exact vs Hand_UI.py) ---------- */
+function lrc(a){let s=0;for(const b of a)s=(s+b)&0xff;return (~s+1)&0xff;}
+function buildReq(func,addr,data){
+  const d=data||[], f=[0x55,0xAA,0x00,func,addr&0xff,(addr>>8)&0xff,d.length&0xff,(d.length>>8)&0xff,...d];
+  f.push(lrc(f)); return new Uint8Array(f);
+}
+const REQ={
+  autopush:on=>buildReq(0x10,0x0017,[on?1:0]),
+  content :b =>buildReq(0x10,0x0016,[b&0xff]),
+  zero    :()=>buildReq(0x17,0x0002,[1]),
+};
+
+/* ---------- serial ---------- */
+let port=null, reader=null, writer=null, rxbuf=new Uint8Array(0), keepReading=false, connecting=false;
+async function write(bytes,label){
+  if(!writer) return false;
+  try{ await writer.write(bytes); log('tx','TX '+(label?label+'  ':'')+hex(bytes)); return true; }
+  catch(e){ log('er','write failed: '+e.message); lostConnection('write error'); return false; }
+}
+async function connect(){
+  if(connecting||port) return;
+  if(!("serial" in navigator)){ log('er','此浏览器不支持 Web Serial（需在 Chrome/Edge 本地打开）'); return; }
+  connecting=true; $("connect").disabled=true;
+  let p=null;
+  try{
+    p=await navigator.serial.requestPort();
+    await p.open({baudRate:parseInt($("baud").value,10)});
+    writer=p.writable.getWriter();
+    port=p; S.demo=false; $("demoBanner").style.display='none';
+    setState('live','Connected'); $("connect").textContent='断开 Disconnect';
+    $("stream").disabled=false; $("zero").disabled=false; $("record").disabled=false; $("demo").disabled=true;
+    log('ok','Serial opened @ '+$("baud").value+' 8N1');
+    keepReading=true; readLoop();
+  }catch(e){
+    log('er','open failed: '+e.message);
+    try{ if(writer){writer.releaseLock();} }catch(_){}
+    try{ if(p) await p.close(); }catch(_){}
+    port=null; writer=null;
+  }finally{ connecting=false; $("connect").disabled=false; }
+}
+async function disconnect(){
+  keepReading=false; S.streaming=false; $("stream").textContent='开始 Start Stream';
+  try{ await write(REQ.autopush(0),'auto-push off'); }catch(_){}
+  try{ if(writer) writer.releaseLock(); }catch(_){}     // separate from the awaited write
+  try{ if(reader) await reader.cancel(); }catch(_){}
+  try{ if(reader) reader.releaseLock(); }catch(_){}
+  try{ if(port) await port.close(); }catch(_){}
+  resetConn('disconnected');
+}
+function resetConn(reason){
+  port=writer=reader=null; keepReading=false; S.streaming=false;
+  setState('idle','Idle'); $("connect").textContent='连接串口 Connect';
+  $("stream").textContent='开始 Start Stream';
+  $("stream").disabled=$("zero").disabled=$("record").disabled=true;
+  $("demo").disabled=false;
+  if(reason) log('t',reason);
+}
+function lostConnection(reason){
+  if(!port&&!writer) return;
+  log('er','连接已断开：'+reason);
+  try{ if(writer) writer.releaseLock(); }catch(_){}
+  resetConn(null); setState('bad','Disconnected');
+}
+async function readLoop(){
+  try{ reader=port.readable.getReader(); }catch(e){ lostConnection('reader lock'); return; }
+  try{
+    while(keepReading){
+      const {value,done}=await reader.read();
+      if(done) break;
+      if(value&&value.length){ appendRx(value); parseStream(); }
+    }
+  }catch(e){ if(keepReading) lostConnection(e.message||'read error'); }
+  finally{ try{reader.releaseLock();}catch(_){} }
+}
+function appendRx(chunk){
+  const CAP=16384;
+  let n=new Uint8Array(rxbuf.length+chunk.length); n.set(rxbuf); n.set(chunk,rxbuf.length);
+  if(n.length>CAP){ // resync to the last frame header rather than a blind chop
+    let h=n.lastIndexOf(0xAA); while(h>0 && n[h+1]!==0x56) h=n.lastIndexOf(0xAA,h-1);
+    n = h>0 ? n.slice(h) : n.slice(n.length-CAP);
+  }
+  rxbuf=n;
+}
+
+/* ---------- auto-push frame parser (head AA 56) ---------- */
+function parseStream(){
+  let i=0;
+  while(rxbuf.length-i>=6){
+    if(rxbuf[i]!==0xAA||rxbuf[i+1]!==0x56){ i++; continue; }
+    const vlen=rxbuf[i+3]|(rxbuf[i+4]<<8), frameLen=vlen+6;
+    if(vlen===0||frameLen>16384){ i++; continue; }
+    if(rxbuf.length-i<frameLen) break;
+    const frame=rxbuf.subarray(i,i+frameLen);
+    if(lrc(frame.subarray(0,frameLen-1))!==frame[frameLen-1]){ i++; continue; }
+    onFrame(frame[5], frame.subarray(6, 6+(vlen-1))); i+=frameLen;
+  }
+  if(i>0) rxbuf=rxbuf.slice(i);
+}
+const i8=v=>v>127?v-256:v;
+function onFrame(errByte, payload){
+  S.err=errByte; let off=0;
+  if(PROTO.content&0x01){                     // resultant: 3x int16 LE ×0.1
+    if(payload.length>=6){
+      const rd=k=>{let v=payload[k]|(payload[k+1]<<8); if(v>32767)v-=65536; return v*0.1;};
+      S.res={fx:rd(0),fy:rd(2),fz:rd(4)}; off=6;
+    }
+  }
+  if(PROTO.content&0x02){                      // distributed: per point Fx,Fy int8 / Fz uint8 ×0.1
+    const n=Math.floor((payload.length-off)/3), pts=[];
+    for(let k=0;k<n;k++){const b=off+k*3;pts.push({fx:i8(payload[b])*0.1,fy:i8(payload[b+1])*0.1,fz:payload[b+2]*0.1});}
+    if(pts.length){ S.points=pts; S.n=pts.length; }
+    if(!(PROTO.content&0x01)){let fx=0,fy=0,fz=0;for(const p of pts){fx+=p.fx;fy+=p.fy;fz+=p.fz;}S.res={fx,fy,fz};}
+  }else{
+    for(const p of S.points){p.fx=p.fy=p.fz=0;} // resultant-only: don't leave a stale map
+  }
+  S.frames++; onSample();
+}
+
+/* ---------- sample bookkeeping ---------- */
+let lastFrameT=performance.now(), rateEMA=0;
+function onSample(){
+  const now=performance.now(), dt=now-lastFrameT; lastFrameT=now;
+  if(dt>0){const inst=1000/dt; rateEMA=rateEMA?rateEMA*0.9+inst*0.1:inst;}
+  S.trFx.push(S.res.fx); S.trFy.push(S.res.fy); S.trFz.push(S.res.fz);
+  if(S.trFx.length>S.TRN){S.trFx.shift();S.trFy.shift();S.trFz.shift();}
+  if(S.recording){
+    if(S.csv.length>S.MAXROWS){ stopRecord(); log('er','录制已达上限 '+S.MAXROWS+' 行，自动停止'); }
+    else{
+      const row=[Date.now(),S.res.fx.toFixed(2),S.res.fy.toFixed(2),S.res.fz.toFixed(2)];
+      for(let k=0;k<S.recN;k++){const p=S.points[k];row.push(p?p.fx.toFixed(1):'0',p?p.fy.toFixed(1):'0',p?p.fz.toFixed(1):'0');}
+      S.csv.push(row.join(',')); $("rows2").textContent=S.csv.length-1;
+    }
+  }
+}
+
+/* ---------- demo generator ---------- */
+let demoPhase=0;
+function demoStep(){
+  if(!S.demo) return;
+  if(!reducedMotion.matches) demoPhase+=0.05;
+  const cx=Math.cos(demoPhase)*0.32+0.5, cy=Math.sin(demoPhase*0.7)*0.32+0.5;
+  const cols=S.cols, rows=S.rows, n=cols*rows, pts=[]; let rfx=0,rfy=0,rfz=0;
+  for(let k=0;k<n;k++){
+    const gx=(k%cols)/(cols-1||1), gy=Math.floor(k/cols)/(rows-1||1), d2=(gx-cx)**2+(gy-cy)**2;
+    const fz=Math.max(0,6.5*Math.exp(-d2*18)-0.05)*(0.85+0.15*Math.sin(demoPhase*3));
+    const ux=cx-gx, uy=cy-gy, m=Math.hypot(ux,uy)||1, shear=fz*0.35;
+    const fx=ux/m*shear, fy=uy/m*shear; pts.push({fx,fy,fz}); rfx+=fx; rfy+=fy; rfz+=fz;
+  }
+  S.points=pts; S.n=n; S.res={fx:rfx*0.15,fy:rfy*0.15,fz:rfz}; S.err=0; S.frames++; onSample();
+}
+
+/* ---------- rendering ---------- */
+const map=$("map"), mctx=map.getContext('2d');
+const trace=$("trace"), tctx=trace.getContext('2d');
+function fitCanvas(cv){
+  const r=cv.getBoundingClientRect(), dpr=Math.min(devicePixelRatio||1,2);
+  const w=Math.max(1,Math.round(r.width*dpr)), h=Math.max(1,Math.round(r.height*dpr));
+  if(cv.width!==w) cv.width=w; if(cv.height!==h) cv.height=h;     // only realloc on real change
+  return {dpr,ok:r.width>2&&r.height>2};
+}
+function cssvar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+
+function drawMap(){
+  const {dpr,ok}=fitCanvas(map), W=map.width, H=map.height;
+  mctx.clearRect(0,0,W,H); if(!ok) return;
+  const cols=Math.max(1,S.cols|0), rows=Math.max(1,S.rows|0), n=Math.max(S.n,1);
+  const pad=22*dpr, cell=Math.min((W-2*pad)/cols,(H-2*pad)/rows);
+  if(!(cell>1)) return;                                            // collapsed panel guard
+  const ox=(W-cell*cols)/2, oy=(H-cell*rows)/2, fs=S.fsN;
+  const line=cssvar('--faint'), acc=cssvar('--accent');           // hoisted out of the loop
+  const armMax=cell*0.9, vscale=cell*0.9/(fs*0.5);
+  let peak=0; for(let k=0;k<S.n;k++){const p=S.points[k];if(p){const m=Math.hypot(p.fx,p.fy,p.fz);if(m>peak)peak=m;}}
+  const drawn=Math.min(n,cols*rows);
+  for(let k=0;k<drawn;k++){
+    const c=k%cols, r=Math.floor(k/cols); if(r>=rows) break;
+    const x=ox+cell*(c+0.5), y=oy+cell*(r+0.5), p=S.points[k]||{fx:0,fy:0,fz:0};
+    const t=clamp(p.fz/fs,0,1), rad=cell*0.12+cell*0.34*t;
+    mctx.globalAlpha=0.35; mctx.beginPath(); mctx.arc(x,y,cell*0.12,0,7); mctx.fillStyle=line; mctx.fill(); mctx.globalAlpha=1;
+    if(p.fz>0.05){ mctx.beginPath(); mctx.arc(x,y,rad,0,7); mctx.fillStyle=ramp(t); mctx.fill(); }
+    if(S.vectors){
+      const sh=Math.hypot(p.fx,p.fy);
+      if(sh>0.05){
+        let ex=p.fx*vscale, ey=p.fy*vscale, L=Math.hypot(ex,ey);
+        if(L>armMax){ex*=armMax/L;ey*=armMax/L;}                  // clamp arrow length
+        ex+=x; ey+=y;
+        mctx.beginPath(); mctx.moveTo(x,y); mctx.lineTo(ex,ey); mctx.strokeStyle=acc; mctx.lineWidth=1.6*dpr; mctx.stroke();
+        const ang=Math.atan2(ey-y,ex-x), ah=4*dpr;
+        mctx.beginPath(); mctx.moveTo(ex,ey);
+        mctx.lineTo(ex-ah*Math.cos(ang-0.5),ey-ah*Math.sin(ang-0.5));
+        mctx.lineTo(ex-ah*Math.cos(ang+0.5),ey-ah*Math.sin(ang+0.5));
+        mctx.closePath(); mctx.fillStyle=acc; mctx.fill();
+      }
+    }
+  }
+  $("peak").textContent='peak '+peak.toFixed(1)+' N';
+  $("npts").textContent=S.n+' pts'+(S.n>cols*rows?' (grid<n)':'');
+}
+
+function drawTrace(){
+  const {dpr,ok}=fitCanvas(trace), W=trace.width, H=trace.height;
+  tctx.clearRect(0,0,W,H); if(!ok) return;
+  tctx.strokeStyle=cssvar('--line'); tctx.lineWidth=1;
+  for(let g=0;g<=4;g++){const y=Math.round(H*g/4)+.5;tctx.globalAlpha=.5;tctx.beginPath();tctx.moveTo(0,y);tctx.lineTo(W,y);tctx.stroke();}
+  tctx.globalAlpha=1;
+  let mx=1; for(const v of S.trFx)mx=Math.max(mx,Math.abs(v)); for(const v of S.trFy)mx=Math.max(mx,Math.abs(v)); for(const v of S.trFz)mx=Math.max(mx,Math.abs(v)); mx*=1.15;
+  const N=S.TRN, series=[[S.trFz,cssvar('--accent')],[S.trFx,cssvar('--fx')],[S.trFy,cssvar('--fy')]];
+  for(const [arr,col] of series){
+    tctx.strokeStyle=col; tctx.lineWidth=1.6*dpr; tctx.beginPath();
+    for(let k=0;k<arr.length;k++){const x=W*(k/(N-1)), y=H/2-(arr[k]/mx)*(H/2-4*dpr); k?tctx.lineTo(x,y):tctx.moveTo(x,y);}
+    tctx.stroke();
+  }
+}
+function renderNums(){
+  const set=(id,v)=>{$(id).textContent=(v>=0?' ':'')+v.toFixed(2);};
+  set('fx',S.res.fx); set('fy',S.res.fy); set('fz',S.res.fz);
+  const bip=(id,v,fs)=>{const t=clamp(v/fs,-1,1),e=$(id);if(t>=0){e.style.left='50%';e.style.width=(t*50)+'%';}else{e.style.left=(50+t*50)+'%';e.style.width=(-t*50)+'%';}};
+  const uni=(id,v,fs)=>{const t=clamp(v/fs,0,1),e=$(id);e.style.left='0';e.style.width=(t*100)+'%';};
+  bip('fxb',S.res.fx,10); bip('fyb',S.res.fy,10); uni('fzb',S.res.fz,S.fsN);   // Fz is unipolar
+  $("errv").innerHTML = S.err? `<span style="color:var(--bad)">err 0x${S.err.toString(16)}</span>` : '<span style="color:var(--good)">OK</span>';
+  $("frames").textContent=S.frames; $("rate").textContent=rateEMA.toFixed(1)+' Hz'; $("fps").textContent=Math.round(fpsEMA)+' fps';
+}
+let summaryT=0;
+function updateSummary(now){
+  if(now-summaryT<1000) return; summaryT=now;
+  $("summary").textContent=`合力 Fx ${S.res.fx.toFixed(1)}, Fy ${S.res.fy.toFixed(1)}, Fz ${S.res.fz.toFixed(1)} N; ${S.n} 点，速率 ${rateEMA.toFixed(0)} Hz`;
+}
+
+/* ---------- main loop (guarded so a throw never kills the pump) ---------- */
+let fpsEMA=0, lastPaint=performance.now();
+function loop(){
+  const now=performance.now(), dt=now-lastPaint; lastPaint=now;
+  if(dt>0) fpsEMA=fpsEMA?fpsEMA*0.9+(1000/dt)*0.1:1000/dt;
+  try{ if(S.demo) demoStep(); drawMap(); drawTrace(); renderNums(); updateSummary(now); }
+  catch(e){ console.error(e); }
+  finally{ requestAnimationFrame(loop); }
+}
+
+/* ---------- UI ---------- */
+function setState(kind,txt){
+  $("stateDot").className='dot'+(kind==='live'?' live':kind==='warn'?' warnc':kind==='bad'?' badc':'');
+  $("stateTxt").textContent=txt;
+}
+$("connect").onclick=()=>{ port?disconnect():connect(); };
+$("stream").onclick=async()=>{
+  if(S.demo){ log('t','Demo 模式无需 Start（数据已在滚动）'); return; }
+  if(!S.streaming){
+    PROTO.content=parseInt($("content").value,10);
+    if(await write(REQ.content(PROTO.content),'set content 0x16='+PROTO.content) &&
+       await write(REQ.autopush(1),'auto-push on')){
+      S.streaming=true; $("stream").textContent='停止 Stop Stream'; setState('live','Streaming');
+    }
+  }else{
+    await write(REQ.autopush(0),'auto-push off');
+    S.streaming=false; $("stream").textContent='开始 Start Stream'; setState('live','Connected');
+  }
+};
+$("zero").onclick=async()=>{ if(S.demo){log('t','Demo: 标定（模拟）');return;} if(await write(REQ.zero(),'标定/zero')) log('ok','标定指令已发送'); };
+$("content").onchange=async()=>{ PROTO.content=parseInt($("content").value,10);
+  if(S.streaming) await write(REQ.content(PROTO.content),'set content 0x16='+PROTO.content); };  // keep device+parser in sync
+$("cols").oninput=e=>S.cols=clamp(numOr(e.target.value,11)|0,1,40);
+$("rows").oninput=e=>S.rows=clamp(numOr(e.target.value,7)|0,1,40);
+$("fsN").oninput=e=>{S.fsN=clamp(numOr(e.target.value,10),1,25); $("fsLbl").textContent=S.fsN+' N';};
+$("vectors").onchange=e=>S.vectors=e.target.checked;
+$("demo").onclick=()=>{ if(port){log('t','已连接硬件，Demo 不可用');return;} S.demo=!S.demo;
+  $("demo").setAttribute('aria-pressed',S.demo?'true':'false'); $("demo").textContent=(S.demo?'■ 演示中 Demo':'演示 Demo');
+  $("demoBanner").style.display=S.demo?'block':'none'; setState(S.demo?'warn':'idle',S.demo?'Demo':'Idle'); };
+function startRecord(){ S.recN=S.n; S.csv=[]; const hdr=['t_ms','Fx','Fy','Fz'];
+  for(let k=0;k<S.recN;k++)hdr.push('p'+k+'x','p'+k+'y','p'+k+'z'); S.csv.push(hdr.join(','));
+  S.recording=true; $("record").textContent='■ 停止 Stop Record'; $("download").disabled=true; log('ok','recording '+S.recN+' pts…'); }
+function stopRecord(){ S.recording=false; $("record").textContent='● 录制 Record CSV';
+  $("download").disabled=(S.csv.length<=1); log('ok','recorded '+(S.csv.length-1)+' rows'); }
+$("record").onclick=()=>{ S.recording?stopRecord():startRecord(); };
+$("download").onclick=()=>{ if(S.csv.length<=1)return;
+  const blob=new Blob([S.csv.join('\n')],{type:'text/csv'}), a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='paxini_capture_'+Date.now()+'.csv'; a.click(); URL.revokeObjectURL(a.href); };
+$("clearlog").onclick=()=>$("log").textContent='';
+$("theme").onclick=()=>{ const cur=document.documentElement.getAttribute('data-theme');
+  const next=cur==='light'?'dark':cur==='dark'?'light':(matchMedia('(prefers-color-scheme:dark)').matches?'light':'dark');
+  document.documentElement.setAttribute('data-theme',next); };
+
+/* ---------- boot ---------- */
+if(!("serial" in navigator)){ setState('warn','Demo'); $("demo").setAttribute('aria-pressed','true'); $("demo").textContent='■ 演示中 Demo'; log('t','Web Serial 不可用 → 演示模式'); }
+else { $("demoBanner").style.display='none'; log('t','就绪。点“连接串口”选择通信盒串口。'); }
+$("fsLbl").textContent=S.fsN+' N';
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>

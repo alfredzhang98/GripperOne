@@ -9,6 +9,7 @@ idf_component_register(
         haptic_uart
         imu_uart
         motor_twai
+        gripper
         oled_sh1106
         wireless_ble
         wireless_wifi

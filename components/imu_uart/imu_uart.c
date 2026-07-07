@@ -22,8 +22,8 @@ static const char *TAG = "imu_uart";
 #define IMU_TYPE_MAG     0x54
 #define IMU_TYPE_QUAT    0x59   /* q0,q1,q2,q3 (scalar-first) */
 
-#define PARSE_BUF_SIZE   64
 #define UART_READ_CHUNK  128
+#define PARSE_BUF_SIZE   256   /* must be >= UART_READ_CHUNK; holds several 11-byte frames */
 
 typedef struct {
     imu_uart_cfg_t   cfg;
@@ -32,6 +32,43 @@ typedef struct {
     size_t   acc_len;
     imu_sample_t cur;   /* accumulates fields across angle/quat frames */
 } imu_ctx_t;
+
+/* Single instance; retained so the public config helpers can reach the UART. */
+static int s_imu_port = -1;
+
+/* WitMotion config frames are 5 bytes: 0xFF 0xAA <addr> <dataL> <dataH> (no
+ * checksum). Settings need: unlock (KEY 0x69 = 0xB588) -> write -> save. */
+#define IMU_REG_SAVE   0x00
+#define IMU_REG_CALSW  0x01
+#define IMU_REG_KEY    0x69
+
+static void imu_send_cmd(uint8_t addr, uint8_t dl, uint8_t dh)
+{
+    if (s_imu_port < 0) return;
+    const uint8_t f[5] = {0xFF, 0xAA, addr, dl, dh};
+    uart_write_bytes(s_imu_port, (const char *)f, sizeof(f));
+}
+
+static void imu_unlock(void) { imu_send_cmd(IMU_REG_KEY, 0x88, 0xB5); }
+static void imu_save(void)   { imu_send_cmd(IMU_REG_SAVE, 0x00, 0x00); }
+
+void imu_uart_calibrate(void)
+{
+    /* CALSW = 1 : accelerometer/gyro auto-calibration. Keep the unit still.
+     * TODO: confirm the exact CALSW code for your JY901P's write-format table
+     * (values differ slightly across WitMotion models). */
+    imu_unlock();
+    imu_send_cmd(IMU_REG_CALSW, 0x01, 0x00);
+    imu_save();
+}
+
+void imu_uart_set_zero(void)
+{
+    /* CALSW = 4 : set current yaw / Z-axis angle as the reference (zero).
+     * TODO: confirm the CALSW code from the manual. */
+    imu_unlock();
+    imu_send_cmd(IMU_REG_CALSW, 0x04, 0x00);
+}
 
 static inline int16_t rd_i16le(const uint8_t *p)
 {
@@ -63,8 +100,20 @@ static bool imu_decode(imu_ctx_t *ctx, const uint8_t *f)
 
 static void imu_consume(imu_ctx_t *ctx, const uint8_t *data, size_t len)
 {
+    /* Never copy more than the buffer can hold. */
+    if (len > PARSE_BUF_SIZE) {
+        data += len - PARSE_BUF_SIZE;
+        len = PARSE_BUF_SIZE;
+    }
+    /* Drop just enough oldest bytes to fit the new data (bounded, no overflow). */
     if (ctx->acc_len + len > PARSE_BUF_SIZE) {
-        ctx->acc_len = 0;   /* orientation is periodic; safe to drop backlog */
+        size_t drop = (ctx->acc_len + len) - PARSE_BUF_SIZE;
+        if (drop >= ctx->acc_len) {
+            ctx->acc_len = 0;
+        } else {
+            memmove(ctx->acc, ctx->acc + drop, ctx->acc_len - drop);
+            ctx->acc_len -= drop;
+        }
     }
     memcpy(ctx->acc + ctx->acc_len, data, len);
     ctx->acc_len += len;
@@ -155,6 +204,7 @@ int imu_uart_start(const imu_uart_cfg_t *cfg, const app_bus_t *bus)
     ESP_ERROR_CHECK(uart_param_config(cfg->uart_port, &uart_cfg));
     ESP_ERROR_CHECK(uart_set_pin(cfg->uart_port, cfg->tx_gpio, cfg->rx_gpio,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    s_imu_port = cfg->uart_port;
 
     if (xTaskCreate(imu_uart_task, "imu_uart", 4096, ctx, 6, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create imu_uart_task");

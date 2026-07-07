@@ -33,9 +33,10 @@ static const char *TAG = "motor_twai";
 #define DM_KD_MAX  ( 5.0f)
 
 /* Damiao well-known 8-byte control frames (sent to CAN ID = ESC_ID). */
-static const uint8_t DM_FRAME_ENABLE[8]  = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFC};
-static const uint8_t DM_FRAME_DISABLE[8] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFD};
-/* Also useful later: save-zero = ...FE, clear-error = ...FB. */
+static const uint8_t DM_FRAME_ENABLE[8]    = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFC};
+static const uint8_t DM_FRAME_DISABLE[8]   = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFD};
+static const uint8_t DM_FRAME_SAVE_ZERO[8] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFE};
+static const uint8_t DM_FRAME_CLEAR_ERR[8] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFB};
 
 /* Standard MIT linear encode/decode (Ben Katz style). */
 static uint16_t float_to_uint(float x, float x_min, float x_max, uint8_t bits)
@@ -56,7 +57,9 @@ static twai_node_handle_t s_node = NULL;
 static const app_bus_t   *s_bus  = NULL;
 
 static volatile bool  s_enabled = false;
-static volatile float s_target  = 0.0f;   /* MIT position command, rad */
+static volatile float s_target  = 0.0f;   /* MIT position command, rad     */
+static volatile float s_vel     = 0.0f;   /* MIT velocity command, rad/s   */
+static volatile float s_tff     = 0.0f;   /* MIT torque feedforward, N·m   */
 /* Default impedance gains. Kd must be non-zero for stable position control. */
 static volatile float s_kp = 5.0f;
 static volatile float s_kd = 1.0f;
@@ -93,7 +96,37 @@ void motor_twai_disable(void)
 void motor_twai_set_target(float target)
 {
     s_target = target;
+    s_vel = 0.0f;
+    s_tff = 0.0f;
     ESP_LOGI(TAG, "target=%.3f", target);
+}
+
+void motor_twai_set_mit(float pos, float vel, float kp, float kd, float tff)
+{
+    s_target = pos;
+    s_vel    = vel;
+    s_kp     = kp;
+    s_kd     = kd;
+    s_tff    = tff;
+}
+
+void motor_twai_set_gains(float kp, float kd)
+{
+    s_kp = kp;
+    s_kd = kd;
+    ESP_LOGI(TAG, "gains kp=%.2f kd=%.2f", kp, kd);
+}
+
+void motor_twai_save_zero(void)
+{
+    if (s_node) motor_tx_id(MOTOR_ESC_ID, DM_FRAME_SAVE_ZERO);
+    ESP_LOGI(TAG, "save-zero");
+}
+
+void motor_twai_clear_error(void)
+{
+    if (s_node) motor_tx_id(MOTOR_ESC_ID, DM_FRAME_CLEAR_ERR);
+    ESP_LOGI(TAG, "clear-error");
 }
 
 /* ---- periodic command frame --------------------------------------------- */
@@ -106,7 +139,8 @@ void motor_twai_set_target(float target)
  *   D2 = v[11:4]             D3 = v[3:0]<<4 | kp[11:8]
  *   D4 = kp[7:0]            D5 = kd[11:4]
  *   D6 = kd[3:0]<<4 | t[11:8]  D7 = t[7:0]
- * We command a position hold (v_des = 0, t_ff = 0) with impedance gains.
+ * Fields come from the last motor_twai_set_target()/set_mit() call, so the
+ * gripper layer can do position, velocity, or torque(force) control.
  */
 static void motor_send_command(void)
 {
@@ -114,10 +148,10 @@ static void motor_send_command(void)
         return;
     }
     uint16_t p  = float_to_uint(s_target, DM_P_MIN, DM_P_MAX, 16);
-    uint16_t v  = float_to_uint(0.0f,     DM_V_MIN, DM_V_MAX, 12);
+    uint16_t v  = float_to_uint(s_vel,    DM_V_MIN, DM_V_MAX, 12);
     uint16_t kp = float_to_uint(s_kp,     DM_KP_MIN, DM_KP_MAX, 12);
     uint16_t kd = float_to_uint(s_kd,     DM_KD_MIN, DM_KD_MAX, 12);
-    uint16_t tq = float_to_uint(0.0f,     DM_T_MIN, DM_T_MAX, 12);
+    uint16_t tq = float_to_uint(s_tff,    DM_T_MIN, DM_T_MAX, 12);
 
     uint8_t data[8];
     data[0] = p >> 8;

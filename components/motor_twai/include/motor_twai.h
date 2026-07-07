@@ -42,8 +42,24 @@ void motor_twai_enable(void);
 /** @brief Request the motor be disabled. */
 void motor_twai_disable(void);
 
-/** @brief Set the motor target (units depend on control mode; e.g. position). */
+/** @brief Set the motor target position (rad); velocity and torque are zeroed. */
 void motor_twai_set_target(float target);
+
+/**
+ * @brief Set the full MIT command (position/velocity/gains/torque-feedforward).
+ * This is what the gripper layer uses for position, velocity, or constant-force
+ * (torque) control. Values are re-sent every command cycle until changed.
+ */
+void motor_twai_set_mit(float pos, float vel, float kp, float kd, float tff);
+
+/** @brief Set MIT impedance gains. Kd should stay non-zero for stable holds. */
+void motor_twai_set_gains(float kp, float kd);
+
+/** @brief Set the current shaft position as zero (Damiao save-zero frame). */
+void motor_twai_save_zero(void);
+
+/** @brief Clear a latched motor fault (Damiao clear-error frame). */
+void motor_twai_clear_error(void);
 
 #ifdef __cplusplus
 }

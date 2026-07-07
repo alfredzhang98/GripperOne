@@ -24,6 +24,7 @@
 #include "haptic_uart.h"
 #include "imu_uart.h"
 #include "motor_twai.h"
+#include "gripper.h"
 #include "app_supervisor.h"
 
 #if APP_ENABLE_OLED
@@ -77,7 +78,10 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(motor_twai_start(&motor_cfg, &s_bus));
 
-    /* ---- Supervisor state machine ---- */
+    /* ---- High-level gripper app (loads calibration from flash) ---- */
+    ESP_ERROR_CHECK(gripper_init());
+
+    /* ---- Supervisor state machine (ticks the gripper) ---- */
     ESP_ERROR_CHECK(app_supervisor_start(&s_bus));
 
 #if APP_ENABLE_BLE

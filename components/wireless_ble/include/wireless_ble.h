@@ -6,10 +6,11 @@
  * into ctrl_msg_t messages on bus->ctrl_q. The supervisor decides what to do
  * with them. A status characteristic is exposed for read/notify.
  *
- * Control characteristic write payload (little-endian):
- *   byte 0      : command id (see ctrl_cmd_id_t: 1=enable, 2=disable,
- *                 3=set_target, 4=request_status)
- *   bytes 1..4  : float32 target   (only meaningful for set_target)
+ * The control characteristic carries the framed app_proto packets (see
+ * app_proto.h) — NOT ad-hoc bytes. Writes are fed into the protocol parser;
+ * decoded commands are posted to bus->ctrl_q for the supervisor. On connect,
+ * BLE registers itself as the app_proto telemetry sink so responses/telemetry
+ * are delivered as GATT notifications on the telemetry characteristic.
  */
 #ifndef WIRELESS_BLE_H
 #define WIRELESS_BLE_H
@@ -23,17 +24,11 @@ extern "C" {
 /**
  * @brief Start the NimBLE host, register the GATT service and begin
  *        advertising. Runs the host on its own task (ble_control_task).
- * @param bus          message bus; control writes are posted to bus->ctrl_q
+ * @param bus          message bus; decoded commands are posted to bus->ctrl_q
  * @param device_name  advertised name
  * @return ESP_OK on success.
  */
 int wireless_ble_start(const app_bus_t *bus, const char *device_name);
-
-/**
- * @brief Publish the latest status so a connected central can read/get
- *        notified. Safe to call from the supervisor task.
- */
-void wireless_ble_publish_status(const motor_status_t *status);
 
 #ifdef __cplusplus
 }

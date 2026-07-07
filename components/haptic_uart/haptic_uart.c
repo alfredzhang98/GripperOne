@@ -40,6 +40,9 @@ typedef struct {
     size_t   acc_len;
 } haptic_ctx_t;
 
+/* Single instance; retained so the public control helpers can reach the UART. */
+static int s_haptic_port = -1;
+
 /* LRC = ((~sum)+1) over the given bytes (matches the vendor reference). */
 static uint8_t haptic_lrc(const uint8_t *p, size_t len)
 {
@@ -74,13 +77,37 @@ static size_t haptic_build_req(uint8_t *out, size_t out_cap, uint8_t func,
     return total;
 }
 
-static void haptic_write_reg8(haptic_ctx_t *ctx, uint16_t addr, uint8_t value)
+static void haptic_write_reg8(int port, uint16_t addr, uint8_t value)
 {
+    if (port < 0) return;
     uint8_t frame[16];
     size_t len = haptic_build_req(frame, sizeof(frame), FUNC_WRITE, addr, &value, 1);
     if (len) {
-        uart_write_bytes(ctx->cfg.uart_port, (const char *)frame, len);
+        uart_write_bytes(port, (const char *)frame, len);
     }
+}
+
+/* ---- public control API (called by the supervisor on host commands) ----- */
+void haptic_uart_set_content(uint8_t content_bits)
+{
+    haptic_write_reg8(s_haptic_port, REG_DATA_TYPE, content_bits);
+}
+
+void haptic_uart_stream(bool enable)
+{
+    haptic_write_reg8(s_haptic_port, REG_AUTO_PUSH_EN, enable ? 0x01 : 0x00);
+}
+
+void haptic_uart_calibrate(void)
+{
+    /* Vendor GUI issues a "calibration" write (func 0x17, reg 0x0002 = 1) that
+     * is NOT in the published protocol table. TODO: confirm/replace once the
+     * real zero/tare command is documented. */
+    if (s_haptic_port < 0) return;
+    uint8_t val = 0x01;
+    uint8_t frame[16];
+    size_t len = haptic_build_req(frame, sizeof(frame), 0x17, 0x0002, &val, 1);
+    if (len) uart_write_bytes(s_haptic_port, (const char *)frame, len);
 }
 
 /* Decode one validated auto-push frame's payload region. */
@@ -186,9 +213,9 @@ static void haptic_uart_task(void *arg)
 
     /* Configure the box: resultant-force content, then enable auto-push. */
     vTaskDelay(pdMS_TO_TICKS(50));
-    haptic_write_reg8(ctx, REG_DATA_TYPE, DATA_TYPE_RESULTANT_ONLY);
+    haptic_write_reg8(ctx->cfg.uart_port, REG_DATA_TYPE, DATA_TYPE_RESULTANT_ONLY);
     vTaskDelay(pdMS_TO_TICKS(10));
-    haptic_write_reg8(ctx, REG_AUTO_PUSH_EN, 0x01);
+    haptic_write_reg8(ctx->cfg.uart_port, REG_AUTO_PUSH_EN, 0x01);
     ESP_LOGI(TAG, "auto-push enabled");
 
     for (;;) {
@@ -227,6 +254,7 @@ int haptic_uart_start(const haptic_uart_cfg_t *cfg, const app_bus_t *bus)
     ESP_ERROR_CHECK(uart_param_config(cfg->uart_port, &uart_cfg));
     ESP_ERROR_CHECK(uart_set_pin(cfg->uart_port, cfg->tx_gpio, cfg->rx_gpio,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    s_haptic_port = cfg->uart_port;
 
     if (xTaskCreate(haptic_uart_task, "haptic_uart", 4096, ctx, 6, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create haptic_uart_task");

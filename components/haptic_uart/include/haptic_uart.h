@@ -14,6 +14,7 @@
 #define HAPTIC_UART_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "app_protocol.h"
 
 #ifdef __cplusplus
@@ -36,6 +37,15 @@ typedef struct {
  * @return ESP_OK on success.
  */
 int haptic_uart_start(const haptic_uart_cfg_t *cfg, const app_bus_t *bus);
+
+/** @brief Select auto-push content (bit0 = resultant force, bit1 = distributed). */
+void haptic_uart_set_content(uint8_t content_bits);
+
+/** @brief Enable/disable the sensor's auto-push data stream (register 0x0017). */
+void haptic_uart_stream(bool enable);
+
+/** @brief Zero/tare the tactile modules (vendor calibration command). */
+void haptic_uart_calibrate(void);
 
 #ifdef __cplusplus
 }
