@@ -6,6 +6,5 @@ managed_components/
 dependencies.lock
 
 # Editor / OS
-.vscode/
 *.swp
 .DS_Store

@@ -83,16 +83,18 @@ typedef struct {
 } imu_sample_t;
 
 /* -------------------------------------------------------------------------
- * Motor status reported back from the TWAI bus.
- * TODO: map to the DM-J4310-2EC feedback frame fields.
+ * Motor status decoded from the DM-J4310-2EC feedback frame (same in every
+ * control mode; frame ID = MST_ID).
  * ------------------------------------------------------------------------- */
 typedef struct {
     uint32_t seq;
-    bool     enabled;
-    float    position;  /* rad */
-    float    velocity;  /* rad/s */
-    float    torque;    /* Nm */
-    uint8_t  error_code;
+    bool     enabled;    /* ERR field == 1 (enabled); 0 = disabled            */
+    float    position;   /* rad                                               */
+    float    velocity;   /* rad/s                                             */
+    float    torque;     /* Nm                                                */
+    float    t_mos;      /* driver MOSFET temperature, °C  (feedback D6)      */
+    float    t_rotor;    /* motor coil temperature, °C     (feedback D7)      */
+    uint8_t  error_code; /* 0 = healthy; 8..E = fault (see DM ERR table)      */
 } motor_status_t;
 
 /* -------------------------------------------------------------------------
