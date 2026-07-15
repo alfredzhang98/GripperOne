@@ -71,15 +71,18 @@ typedef struct {
 } haptic_sample_t;
 
 /* -------------------------------------------------------------------------
- * IMU sample. Either Euler angles or a quaternion, per the source device.
- * TODO: pick the representation the JY901P is configured to emit.
+ * IMU sample (JY901P). Yaw is intentionally dropped: it needs the magnetometer
+ * (unreliable next to the arm/motors). We keep gravity-referenced roll/pitch
+ * plus acceleration and angular velocity for vibration/impact sensing.
  * ------------------------------------------------------------------------- */
 typedef struct {
     uint32_t seq;
-    float yaw;    /* deg */
-    float pitch;  /* deg */
-    float roll;   /* deg */
-    float quat[4]; /* w,x,y,z (optional; 0 if unused) */
+    float roll;         /* deg  (gravity-referenced tilt) */
+    float pitch;        /* deg */
+    float accel[3];     /* g     (ax, ay, az) — raw, includes gravity */
+    float lin_accel[3]; /* g     gravity removed via roll/pitch (~0 at rest) */
+    float gyro[3];      /* deg/s (gx, gy, gz) — rotational shake */
+    float temp;         /* degC  */
 } imu_sample_t;
 
 /* -------------------------------------------------------------------------
@@ -131,8 +134,10 @@ typedef enum {
     OP_IMU_STREAM_EN    = 0x20,
     OP_IMU_STREAM_DIS   = 0x21,
     OP_IMU_GET          = 0x22, /* -> one IMU telemetry frame                */
-    OP_IMU_CALIBRATE    = 0x23, /* gyro/accel auto-calibration (自校准)       */
-    OP_IMU_SET_ZERO     = 0x24, /* yaw/Z-axis angle reference to zero         */
+    OP_IMU_CALIBRATE    = 0x23, /* accelerometer calibration (still & level)  */
+    OP_IMU_SET_ZERO     = 0x24, /* yaw/Z zero (6-axis only)                   */
+    OP_IMU_SET_REF      = 0x25, /* set current roll/pitch as reference (zero) */
+    OP_IMU_SET_AXIS     = 0x26, /* u0: 0 = 9-axis, 1 = 6-axis                 */
 
     /* --- haptic (0x3-) --- */
     OP_HAPTIC_STREAM_EN = 0x30,

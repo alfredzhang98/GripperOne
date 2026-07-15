@@ -19,7 +19,7 @@ int wireless_wifi_start(const app_bus_t *bus)
      *      go back over the socket. This reuses the SAME user protocol as BLE.
      *
      * Kept as a logged no-op so the component compiles and the feature flag
-     * (APP_ENABLE_WIFI) can be flipped on later without restructuring.
+     * (APP_TRANSPORT = TRANSPORT_WIFI) can be selected later without restructuring.
      */
     ESP_LOGW(TAG, "Wi-Fi control path is a skeleton and not yet implemented");
     return ESP_OK;

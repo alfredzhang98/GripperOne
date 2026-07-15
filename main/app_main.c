@@ -14,7 +14,6 @@
  */
 #include "esp_log.h"
 #include "driver/uart.h"          /* for UART_NUM_x used in app_config.h */
-#include "driver/i2c_master.h"    /* for I2C_NUM_x  used in app_config.h */
 
 #include "app_pins.h"
 #include "app_config.h"
@@ -27,15 +26,9 @@
 #include "gripper.h"
 #include "app_supervisor.h"
 
-#if APP_ENABLE_OLED
-#include "oled_sh1106.h"
-#endif
-#if APP_ENABLE_BLE
+#include "transport_uart.h"
 #include "wireless_ble.h"
-#endif
-#if APP_ENABLE_WIFI
 #include "wireless_wifi.h"
-#endif
 
 static const char *TAG = "app_main";
 
@@ -97,27 +90,13 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(app_supervisor_start(&s_bus, &supervisor_cfg));
 
-#if APP_ENABLE_BLE
+    /* ---- User-layer transport (one of UART / BLE / Wi-Fi; see APP_TRANSPORT) ---- */
+#if   APP_TRANSPORT == TRANSPORT_BLE
     ESP_ERROR_CHECK(wireless_ble_start(&s_bus, BLE_DEVICE_NAME));
-#else
-    ESP_LOGW(TAG, "BLE disabled at compile time (APP_ENABLE_BLE=0)");
-#endif
-
-#if APP_ENABLE_WIFI
+#elif APP_TRANSPORT == TRANSPORT_WIFI
     ESP_ERROR_CHECK(wireless_wifi_start(&s_bus));
-#endif
-
-#if APP_ENABLE_OLED
-    const oled_cfg_t oled_cfg = {
-        .i2c_port = OLED_I2C_PORT,
-        .sda_gpio = PIN_OLED_I2C_SDA,
-        .scl_gpio = PIN_OLED_I2C_SCL,
-        .freq_hz  = OLED_I2C_FREQ_HZ,
-        .addr     = OLED_I2C_ADDR,
-        .task_stack = TASK_STACK_OLED,
-        .task_prio  = TASK_PRIO_OLED,
-    };
-    ESP_ERROR_CHECK(oled_start(&oled_cfg, &s_bus, app_supervisor_state_ptr()));
+#else  /* TRANSPORT_UART (default): app_proto over the native USB-Serial/JTAG */
+    ESP_ERROR_CHECK(transport_uart_start(&s_bus));
 #endif
 
     ESP_LOGI(TAG, "=== all modules started ===");

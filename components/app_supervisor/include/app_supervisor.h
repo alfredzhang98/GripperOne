@@ -34,7 +34,7 @@ typedef struct {
 int app_supervisor_start(const app_bus_t *bus, const app_supervisor_cfg_t *cfg);
 
 /**
- * @brief Read-only pointer to the current system state (for the OLED, etc.).
+ * @brief Read-only pointer to the current system state (for status/telemetry).
  *        Valid after app_supervisor_start().
  */
 const volatile app_state_t *app_supervisor_state_ptr(void);

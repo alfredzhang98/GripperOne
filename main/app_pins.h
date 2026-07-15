@@ -21,8 +21,8 @@
  *   UART2_tx        D1          1     IMU link TX  (XIAO -> IMU RX)
  *   TWAI TX         D2          2     Motor CAN TX (-> transceiver)
  *   TWAI RX         D3         21     Motor CAN RX (<- transceiver)
- *   SDA             D4         22     OLED I2C SDA
- *   SCL             D5         23     OLED I2C SCL
+ *   (free)          D4         22     (was OLED I2C SDA, removed)
+ *   (free)          D5         23     (was OLED I2C SCL, removed)
  *   UART1_tx        D6         16     Haptic link TX (XIAO -> board RX)
  *   UART1_rx        D7         17     Haptic link RX (XIAO <- board TX)
  */
@@ -48,10 +48,8 @@
 #define PIN_IMU_UART_RX          0  /* XIAO D0 */
 
 /* -------------------------------------------------------------------------
- * Optional SH1106 OLED, I2C.
+ * D4 (GPIO22) / D5 (GPIO23) are free (were the SH1106 OLED I2C, now removed).
  * ------------------------------------------------------------------------- */
-#define PIN_OLED_I2C_SDA        22  /* XIAO D4 */
-#define PIN_OLED_I2C_SCL        23  /* XIAO D5 */
 
 /* -------------------------------------------------------------------------
  * Motor control via TWAI (CAN 2.0).

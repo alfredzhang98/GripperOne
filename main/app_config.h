@@ -10,19 +10,16 @@
 #define APP_CONFIG_H
 
 /* =========================================================================
- * Compile-time feature flags
- * Set to 1 to compile-in and start the feature, 0 to leave it out.
+ * User-layer transport
+ * All three (UART / BLE / Wi-Fi) speak the same app_proto protocol and expose
+ * the same start(bus) + app_proto sink. Pick exactly one; the others are still
+ * compiled but not started. Default: UART over the native USB-Serial/JTAG.
  * ========================================================================= */
-#ifndef APP_ENABLE_OLED
-#define APP_ENABLE_OLED     0   /* Optional SH1106 OLED display + oled_task */
-#endif
-
-#ifndef APP_ENABLE_BLE
-#define APP_ENABLE_BLE      1   /* NimBLE GATT control interface */
-#endif
-
-#ifndef APP_ENABLE_WIFI
-#define APP_ENABLE_WIFI     0   /* Optional Wi-Fi control channel (skeleton) */
+#define TRANSPORT_UART      0
+#define TRANSPORT_BLE       1
+#define TRANSPORT_WIFI      2
+#ifndef APP_TRANSPORT
+#define APP_TRANSPORT       TRANSPORT_UART
 #endif
 
 /* =========================================================================
@@ -53,13 +50,6 @@
 #define MOTOR_TWAI_MST_ID       0x000
 
 /* =========================================================================
- * OLED (SH1106) I2C
- * ========================================================================= */
-#define OLED_I2C_PORT           I2C_NUM_0
-#define OLED_I2C_FREQ_HZ        400000
-#define OLED_I2C_ADDR           0x3C        /* Common SH1106 address; 0x3D on some boards */
-
-/* =========================================================================
  * BLE
  * ========================================================================= */
 #define BLE_DEVICE_NAME         "GripperPlus"
@@ -80,14 +70,12 @@
 #define TASK_STACK_HAPTIC       4096
 #define TASK_STACK_IMU          4096
 #define TASK_STACK_MOTOR        4096
-#define TASK_STACK_OLED         3072
 #define TASK_STACK_SUPERVISOR   4096
 
 #define TASK_PRIO_HAPTIC        6   /* high-rate sensor ingest */
 #define TASK_PRIO_IMU           6
 #define TASK_PRIO_MOTOR         7   /* motor I/O is time-critical */
 #define TASK_PRIO_SUPERVISOR    5   /* decision loop */
-#define TASK_PRIO_OLED          3   /* cosmetic, lowest */
 
 /* =========================================================================
  * Inter-task queue depths (number of messages) are owned by app_protocol.h

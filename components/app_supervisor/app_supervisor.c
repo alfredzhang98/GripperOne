@@ -85,14 +85,14 @@ static void auto_enable(uint8_t op)
 {
     if (op >= 0x10 && op <= 0x16) s_stream_motor  = true;
     if (op >= 0x40 && op <= 0x47) s_stream_motor  = true;  /* gripper drives the motor */
-    if (op >= 0x20 && op <= 0x24 && op != OP_IMU_STREAM_DIS)    s_stream_imu    = true;
+    if (op >= 0x20 && op <= 0x26 && op != OP_IMU_STREAM_DIS)    s_stream_imu    = true;
     if (op >= 0x30 && op <= 0x34 && op != OP_HAPTIC_STREAM_DIS) s_stream_haptic = true;
 }
 
 static void run_self_calibrate(void)
 {
     ESP_LOGI(TAG, "self-calibration: IMU + haptic + motor zero");
-    imu_uart_calibrate();
+    imu_uart_cal_accel();
     haptic_uart_calibrate();
     motor_twai_save_zero();
 }
@@ -215,8 +215,10 @@ static void handle_cmd(const app_cmd_t *c)
     case OP_IMU_STREAM_EN:  s_stream_imu = true;  reply_ack(c->seq, c->op, APP_PROTO_OK); break;
     case OP_IMU_STREAM_DIS: s_stream_imu = false; reply_ack(c->seq, c->op, APP_PROTO_OK); break;
     case OP_IMU_GET:        emit_imu(); break;
-    case OP_IMU_CALIBRATE:  imu_uart_calibrate(); reply_ack(c->seq, c->op, APP_PROTO_OK); break;
+    case OP_IMU_CALIBRATE:  imu_uart_cal_accel(); reply_ack(c->seq, c->op, APP_PROTO_OK); break;
     case OP_IMU_SET_ZERO:   imu_uart_set_zero();  reply_ack(c->seq, c->op, APP_PROTO_OK); break;
+    case OP_IMU_SET_REF:    imu_uart_set_angle_ref();      reply_ack(c->seq, c->op, APP_PROTO_OK); break;
+    case OP_IMU_SET_AXIS:   imu_uart_set_axis(c->u0 != 0); reply_ack(c->seq, c->op, APP_PROTO_OK); break;
 
     /* --- haptic --- */
     case OP_HAPTIC_STREAM_EN:  s_stream_haptic = true;  haptic_uart_stream(true);  reply_ack(c->seq, c->op, APP_PROTO_OK); break;

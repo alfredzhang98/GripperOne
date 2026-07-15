@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IMU Console — pitch / roll / accel (UART · app_proto)</title>
+<style>
+  :root{--bg:#0b0e12;--surface:#141a21;--surface-2:#1b232c;--line:#242f3a;--text:#cdd8e3;--muted:#8494a3;
+    --accent:#34e5d0;--good:#34d399;--warn:#fbbf24;--bad:#f87171;--fx:#f0a35a;--fy:#8f80f2;
+    --mono:ui-monospace,Consolas,monospace;--sans:system-ui,"Segoe UI",Roboto,sans-serif;}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px}
+  .bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 18px;background:var(--surface);border-bottom:1px solid var(--line)}
+  .brand{font-size:15px;font-weight:600} .brand span{font-size:11px;color:var(--muted);font-family:var(--mono)}
+  .spacer{flex:1}
+  button{background:var(--surface-2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:8px 13px;font:550 13px var(--sans);cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)} button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent);color:#04110f;border-color:var(--accent)}
+  button.bad{border-color:var(--bad);color:var(--bad)} button.bad:hover:not(:disabled){background:color-mix(in srgb,var(--bad) 18%,var(--surface-2))}
+  .pill{display:inline-flex;align-items:center;gap:7px;font:12px var(--mono);padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)} .dot.live{background:var(--good);box-shadow:0 0 8px 1px color-mix(in srgb,var(--good) 70%,transparent)} .dot.bad{background:var(--bad)}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:14px}
+  @media(max-width:840px){.wrap{grid-template-columns:1fr}}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .panel h2{margin:0 0 12px;font:600 12px var(--sans);text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .level{display:block;margin:0 auto;background:var(--bg);border-radius:10px}
+  .att{display:flex;justify-content:space-around;margin-top:12px;text-align:center}
+  .att .k{font:11px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+  .att .v{font:600 30px var(--mono);font-variant-numeric:tabular-nums}
+  .rows{display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:6px 12px;font:13px var(--mono);align-items:center}
+  .rows .h{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  .rows b{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+  .vib{margin-top:12px} .vibtrack{height:8px;border-radius:5px;background:var(--surface-2);overflow:hidden}
+  .vibtrack i{display:block;height:100%;background:linear-gradient(90deg,var(--good),var(--warn),var(--bad));width:0}
+  .kv{display:flex;justify-content:space-between;font:12px var(--mono);color:var(--muted);margin-top:6px}
+  .kv b{color:var(--text)}
+  .ctl{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
+  .log{grid-column:1/-1;font:11.5px var(--mono);line-height:1.5;padding:10px 12px;height:150px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;word-break:break-all}
+  .log .tx{color:var(--warn)} .log .rx{color:var(--accent)} .log .er{color:var(--bad)} .log .ok{color:var(--good)} .log .t{color:var(--muted)}
+  .hint{font:11px var(--mono);color:var(--muted);margin-top:8px}
+</style>
+</head>
+<body>
+<header class="bar">
+  <span class="brand">IMU Console <span>ESP32-C6 · app_proto over USB-Serial/JTAG</span></span>
+  <button id="connect" class="primary">连接 Connect</button>
+  <div class="spacer"></div>
+  <span class="pill"><span class="dot" id="dot"></span><span id="stat">未连接</span></span>
+  <span class="pill" id="rate">0.0 Hz</span>
+</header>
+
+<div class="wrap">
+  <section class="panel">
+    <h2>姿态 Attitude (roll / pitch)</h2>
+    <canvas id="level" class="level" width="260" height="260"></canvas>
+    <div class="att">
+      <div><div class="k">roll</div><div class="v" id="roll">0.0</div></div>
+      <div><div class="k">pitch</div><div class="v" id="pitch">0.0</div></div>
+    </div>
+    <div class="hint">气泡偏移 = 倾斜方向;点“角度参考归零”把当前位置设为 0。</div>
+  </section>
+
+  <section class="panel">
+    <h2>加速度 / 角速度</h2>
+    <div class="rows">
+      <span class="h"></span><span class="h">X</span><span class="h">Y</span><span class="h">Z</span>
+      <span>raw (g)</span>     <b id="ax">0.00</b><b id="ay">0.00</b><b id="az">0.00</b>
+      <span>去重力 lin (g)</span><b id="lx">0.00</b><b id="ly">0.00</b><b id="lz">0.00</b>
+      <span>gyro (°/s)</span>  <b id="gx">0</b><b id="gy">0</b><b id="gz">0</b>
+    </div>
+    <div class="vib">
+      <div class="kv"><span>振动 |lin|</span><b id="vibv">0.00 g</b></div>
+      <div class="vibtrack"><i id="vibbar"></i></div>
+    </div>
+    <div class="kv"><span>温度</span><b id="temp">— ℃</b></div>
+    <div class="kv"><span>帧</span><b id="frames">0</b></div>
+  </section>
+
+  <div class="ctl">
+    <button id="stream" disabled>▶ 开始遥测 Stream</button>
+    <button id="ref" disabled>角度参考归零 (roll/pitch=0)</button>
+    <button id="cal" disabled>加速度校准</button>
+    <button id="axis" disabled>切 6 轴</button>
+    <button id="safe" class="bad" disabled>■ SAFE STOP</button>
+    <button id="clear">清空日志</button>
+  </div>
+
+  <div class="log" id="log" role="log"></div>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const hex=b=>Array.from(b).map(x=>x.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+function log(cls,msg){const el=$("log"),t=new Date().toLocaleTimeString('en-GB');
+  el.insertAdjacentHTML('beforeend',`<span class="t">${t}</span> <span class="${cls}">${msg}</span>\n`);
+  el.scrollTop=el.scrollHeight; if(el.childNodes.length>400) el.removeChild(el.firstChild);}
+
+/* ---- app_proto (matches components/app_protocol) ---- */
+const SOF0=0xA5,SOF1=0x5A,VER=0x01,HDR=7,MAXPL=400,T_CMD=0x00,T_TELE=0x02;
+const OP={STREAM_EN:0x20,STREAM_DIS:0x21,IMU_GET:0x22,CAL:0x23,SET_REF:0x25,SET_AXIS:0x26,SAFE:0x06};
+function crc16(b){let c=0xFFFF;for(const x of b){c^=x<<8;for(let i=0;i<8;i++)c=(c&0x8000)?((c<<1)^0x1021)&0xFFFF:(c<<1)&0xFFFF;}return c&0xFFFF;}
+function u16(v){return [v&0xff,(v>>8)&0xff];}
+let seq=0;
+function buildCmd(...pl){
+  const p=Uint8Array.from(pl), buf=new Uint8Array(HDR+p.length+2);
+  buf[0]=SOF0;buf[1]=SOF1;buf[2]=VER;buf[3]=T_CMD;buf[4]=(seq++)&0xff;buf[5]=p.length&0xff;buf[6]=(p.length>>8)&0xff;
+  buf.set(p,HDR);
+  const c=crc16(buf.subarray(2,HDR+p.length)); buf[HDR+p.length]=c&0xff; buf[HDR+p.length+1]=(c>>8)&0xff;
+  return buf;
+}
+
+/* ---- serial ---- */
+let port=null,reader=null,writer=null,keepReading=false,rx=new Uint8Array(0);
+async function send(buf,label){ if(!writer){log('er','未连接');return;}
+  try{ await writer.write(buf); log('tx','TX '+label+'  '+hex(buf)); }catch(e){ log('er','发送失败: '+e.message); } }
+async function connect(){
+  if(!('serial' in navigator)){ log('er','此浏览器不支持 Web Serial（用 Chrome/Edge，本地打开）'); return; }
+  if(port){ await disconnect(); return; }
+  try{
+    port=await navigator.serial.requestPort();
+    await port.open({baudRate:115200});   /* USB-CDC ignores the actual rate */
+    writer=port.writable.getWriter();
+    setConn(true); log('ok','已连接');
+    keepReading=true; readLoop();
+    await send(buildCmd(OP.STREAM_EN),'STREAM_EN');   /* start IMU telemetry */
+    streaming=true; $("stream").textContent='■ 停止遥测';
+  }catch(e){ log('er','连接失败: '+e.message); port=null; }
+}
+async function disconnect(){
+  keepReading=false;
+  try{ if(writer){writer.releaseLock();} }catch(_){}
+  try{ if(reader){ await reader.cancel(); reader.releaseLock(); } }catch(_){}
+  try{ if(port) await port.close(); }catch(_){}
+  port=writer=reader=null; setConn(false); log('t','已断开');
+}
+async function readLoop(){
+  try{ reader=port.readable.getReader(); }catch(e){ log('er','reader lock'); return; }
+  try{ while(keepReading){ const {value,done}=await reader.read(); if(done)break; if(value&&value.length) feed(value); } }
+  catch(e){ if(keepReading) log('er','read: '+(e.message||e)); }
+  finally{ try{reader.releaseLock();}catch(_){} }
+}
+function setConn(on){
+  $("dot").className='dot'+(on?' live':' bad'); $("stat").textContent=on?'已连接':'未连接';
+  $("connect").textContent=on?'断开 Disconnect':'连接 Connect';
+  for(const id of ['stream','ref','cal','axis','safe']) $(id).disabled=!on;
+}
+
+/* ---- app_proto stream parser (skips interleaved ESP_LOG text via SOF+CRC) ---- */
+function feed(chunk){
+  const n=new Uint8Array(rx.length+chunk.length); n.set(rx); n.set(chunk,rx.length); rx=n;
+  let i=0;
+  while(rx.length-i>=HDR){
+    if(rx[i]!==SOF0){ i++; continue; }
+    if(rx[i+1]!==SOF1){ i++; continue; }
+    const plen=rx[i+5]|(rx[i+6]<<8); if(plen>MAXPL){ i++; continue; }
+    const fl=HDR+plen+2; if(rx.length-i<fl) break;
+    const fr=rx.subarray(i,i+fl), rc=fr[fl-2]|(fr[fl-1]<<8);
+    if(crc16(fr.subarray(2,HDR+plen))!==rc){ i++; continue; }
+    onFrame(fr[3], fr.subarray(HDR,HDR+plen)); i+=fl;
+  }
+  if(i>0) rx=rx.slice(i);
+}
+const rdF=(p,o)=>new DataView(p.buffer,p.byteOffset+o,4).getFloat32(0,true);
+let frames=0,lastT=performance.now(),rateEMA=0;
+const S={roll:0,pitch:0,ax:0,ay:0,az:0,lx:0,ly:0,lz:0,gx:0,gy:0,gz:0,temp:0};
+function onFrame(type,pl){
+  const op=pl.length?pl[0]:0;
+  if(type===T_TELE && op===OP.IMU_GET && pl.length>=49){
+    S.roll=rdF(pl,1); S.pitch=rdF(pl,5);
+    S.ax=rdF(pl,9); S.ay=rdF(pl,13); S.az=rdF(pl,17);
+    S.lx=rdF(pl,21); S.ly=rdF(pl,25); S.lz=rdF(pl,29);
+    S.gx=rdF(pl,33); S.gy=rdF(pl,37); S.gz=rdF(pl,41);
+    S.temp=rdF(pl,45);
+    frames++; const now=performance.now(),dt=now-lastT; lastT=now;
+    if(dt>0){const inst=1000/dt; rateEMA=rateEMA?rateEMA*0.9+inst*0.1:inst;}
+    return;
+  }
+  if(type===0x03) log(pl[1]?'er':'ok',`ACK op=0x${op.toString(16)} status=${pl[1]}`);
+  else if(type===0x04) log('er',`ERR op=0x${op.toString(16)} status=${pl[1]}`);
+}
+
+/* ---- render ---- */
+const cv=$("level"),g=cv.getContext('2d');
+function draw(){
+  const W=cv.width,H=cv.height,cx=W/2,cy=H/2,R=W/2-16;
+  g.clearRect(0,0,W,H);
+  g.strokeStyle='#2b3744'; g.lineWidth=1;
+  g.beginPath(); g.arc(cx,cy,R,0,7); g.stroke();
+  g.beginPath(); g.arc(cx,cy,R*0.5,0,7); g.stroke();
+  g.beginPath(); g.moveTo(cx-R,cy); g.lineTo(cx+R,cy); g.moveTo(cx,cy-R); g.lineTo(cx,cy+R); g.stroke();
+  /* bubble: roll -> x, pitch -> y (±45° full scale) */
+  const bx=cx+clamp(S.roll/45,-1,1)*R, by=cy+clamp(S.pitch/45,-1,1)*R;
+  const tilt=Math.hypot(S.roll,S.pitch);
+  g.beginPath(); g.arc(bx,by,13,0,7);
+  g.fillStyle= tilt>20?'#f87171':tilt>8?'#fbbf24':'#34e5d0'; g.globalAlpha=.85; g.fill(); g.globalAlpha=1;
+  g.lineWidth=2; g.strokeStyle='#0b0e12'; g.stroke();
+}
+function nums(){
+  $("roll").textContent=S.roll.toFixed(1); $("pitch").textContent=S.pitch.toFixed(1);
+  const set=(id,v,d=2)=>$(id).textContent=v.toFixed(d);
+  set('ax',S.ax);set('ay',S.ay);set('az',S.az);
+  set('lx',S.lx);set('ly',S.ly);set('lz',S.lz);
+  set('gx',S.gx,0);set('gy',S.gy,0);set('gz',S.gz,0);
+  const vib=Math.hypot(S.lx,S.ly,S.lz);
+  $("vibv").textContent=vib.toFixed(2)+' g'; $("vibbar").style.width=clamp(vib/1.0,0,1)*100+'%';
+  $("temp").textContent=S.temp.toFixed(1)+' ℃'; $("frames").textContent=frames; $("rate").textContent=rateEMA.toFixed(1)+' Hz';
+}
+function loop(){ try{ draw(); nums(); }catch(e){} requestAnimationFrame(loop); }
+
+/* ---- controls ---- */
+let streaming=false, sixAxis=false;
+$("connect").onclick=connect;
+$("stream").onclick=async()=>{ streaming=!streaming;
+  await send(buildCmd(streaming?OP.STREAM_EN:OP.STREAM_DIS), streaming?'STREAM_EN':'STREAM_DIS');
+  $("stream").textContent=streaming?'■ 停止遥测':'▶ 开始遥测 Stream'; };
+$("ref").onclick =()=>send(buildCmd(OP.SET_REF),'SET_REF (roll/pitch=0)');
+$("cal").onclick =()=>send(buildCmd(OP.CAL),'IMU_CALIBRATE (accel)');
+$("axis").onclick=async()=>{ sixAxis=!sixAxis;
+  await send(buildCmd(OP.SET_AXIS,...u16(sixAxis?1:0)), 'SET_AXIS '+(sixAxis?'6':'9'));
+  $("axis").textContent=sixAxis?'切 9 轴':'切 6 轴'; };
+$("safe").onclick=()=>send(buildCmd(OP.SAFE),'SAFE_STOP');
+$("clear").onclick=()=>$("log").textContent='';
+
+log('t', ('serial' in navigator) ? '就绪。板子上电、默认 UART 传输,点“连接”选 ESP32 的 COM 口。' : '此浏览器不支持 Web Serial。');
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

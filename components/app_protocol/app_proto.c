@@ -91,13 +91,15 @@ size_t app_proto_resp_state(uint8_t *out, size_t cap, uint8_t seq, uint8_t state
 
 size_t app_proto_tele_imu(uint8_t *out, size_t cap, const imu_sample_t *s)
 {
-    uint8_t pl[1 + 7 * 4];
+    uint8_t pl[1 + 12 * 4];  /* op + roll,pitch + accel[3] + lin_accel[3] + gyro[3] + temp */
     size_t k = 0;
     pl[k++] = OP_IMU_GET;
-    k += put_f32(&pl[k], s->yaw);
-    k += put_f32(&pl[k], s->pitch);
     k += put_f32(&pl[k], s->roll);
-    for (int i = 0; i < 4; i++) k += put_f32(&pl[k], s->quat[i]);
+    k += put_f32(&pl[k], s->pitch);
+    for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->accel[i]);
+    for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->lin_accel[i]);
+    for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->gyro[i]);
+    k += put_f32(&pl[k], s->temp);
     return app_proto_build(out, cap, APP_PROTO_T_TELEMETRY, 0, pl, (uint16_t)k);
 }
 
@@ -149,6 +151,7 @@ static void decode_args(app_cmd_t *cmd, const uint8_t *pl, uint16_t plen)
         break;
     case OP_SET_TELEM_RATE:
     case OP_HAPTIC_SET_CONTENT:
+    case OP_IMU_SET_AXIS:
         if (plen >= 1 + 2) cmd->u0 = get_u16(&pl[1]);
         break;
     default:
