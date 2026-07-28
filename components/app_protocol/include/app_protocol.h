@@ -150,11 +150,12 @@ typedef enum {
     OP_GRIP_CALIBRATE  = 0x40,  /* auto-find closed+open stops, save to flash */
     OP_GRIP_HOME       = 0x41,  /* go to fully-closed zero                    */
     OP_GRIP_SET_OPEN   = 0x42,  /* f0 = opening 0.0 (closed) .. 1.0 (open)    */
-    OP_GRIP_GRIP       = 0x43,  /* f0 = grip force N (0 = stored default)     */
+    OP_GRIP_GRIP       = 0x43,  /* f0 = clamp current pu 0..1 (0 = default)   */
     OP_GRIP_RELEASE    = 0x44,  /* open fully                                 */
-    OP_GRIP_SET_FORCE  = 0x45,  /* f0 = default grip force N, persist         */
+    OP_GRIP_SET_FORCE  = 0x45,  /* f0 = default clamp current pu, persist     */
     OP_GRIP_STOP       = 0x46,  /* hold current position                     */
     OP_GRIP_GET_CALIB  = 0x47,  /* -> calibration response (read-only)        */
+    OP_GRIP_MOVE_DEG   = 0x48,  /* f0 = output-shaft angle deg, f1 = deg/s    */
 } app_op_t;
 
 /* A decoded, validated user command handed to the supervisor via ctrl_q. */

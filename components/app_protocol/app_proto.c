@@ -121,13 +121,15 @@ size_t app_proto_tele_haptic(uint8_t *out, size_t cap, const haptic_sample_t *s)
 
 size_t app_proto_tele_motor(uint8_t *out, size_t cap, const motor_status_t *s)
 {
-    uint8_t pl[1 + 1 + 3 * 4 + 1];
+    uint8_t pl[1 + 1 + 5 * 4 + 1];   /* op, enabled, pos/vel/torque/t_mos/t_rotor, err */
     size_t k = 0;
     pl[k++] = OP_MOTOR_GET_STATUS;
     pl[k++] = s->enabled ? 1 : 0;
     k += put_f32(&pl[k], s->position);
     k += put_f32(&pl[k], s->velocity);
     k += put_f32(&pl[k], s->torque);
+    k += put_f32(&pl[k], s->t_mos);
+    k += put_f32(&pl[k], s->t_rotor);
     pl[k++] = s->error_code;
     return app_proto_build(out, cap, APP_PROTO_T_TELEMETRY, 0, pl, (uint16_t)k);
 }
@@ -144,6 +146,7 @@ static void decode_args(app_cmd_t *cmd, const uint8_t *pl, uint16_t plen)
         if (plen >= 1 + 4) cmd->f0 = get_f32(&pl[1]);
         break;
     case OP_MOTOR_SET_GAINS:
+    case OP_GRIP_MOVE_DEG:
         if (plen >= 1 + 8) { cmd->f0 = get_f32(&pl[1]); cmd->f1 = get_f32(&pl[5]); }
         break;
     case OP_SESSION_UNLOCK:

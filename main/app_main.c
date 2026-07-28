@@ -7,10 +7,16 @@
  *   2. Create the inter-task message bus.
  *   3. Hand each driver its pin/baud config (from app_pins.h / app_config.h)
  *      and start it.
- *   4. Start the supervisor state machine.
+ *   4. Start the supervisor state machine and the selected user transport.
  *
  * All hardware logic lives in components/. This file only owns configuration
  * and wiring.
+ *
+ * Data flow:
+ *   haptic_uart_task --\
+ *   imu_uart_task -----+--> [bus queues] --> supervisor_task --> gripper --> motor_twai
+ *   motor_twai_task --/                           ^
+ *   transport (UART/BLE/WiFi) --> ctrl_q ---------+
  */
 #include "esp_log.h"
 #include "driver/uart.h"          /* for UART_NUM_x used in app_config.h */
@@ -79,10 +85,10 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(motor_twai_start(&motor_cfg, &s_bus));
 
-    /* ---- High-level gripper app (loads calibration from flash) ---- */
+    /* ---- High-level gripper app (force-position mode, loads calib from flash) ---- */
     ESP_ERROR_CHECK(gripper_init());
 
-    /* ---- Supervisor state machine (ticks the gripper) ---- */
+    /* ---- Supervisor state machine (drains sensors, ticks the gripper) ---- */
     const app_supervisor_cfg_t supervisor_cfg = {
         .task_stack  = TASK_STACK_SUPERVISOR,
         .task_prio   = TASK_PRIO_SUPERVISOR,

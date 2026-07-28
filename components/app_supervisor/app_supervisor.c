@@ -84,7 +84,7 @@ static void emit_motor(void)  { uint8_t f[APP_PROTO_MAX_FRAME]; size_t n = app_p
 static void auto_enable(uint8_t op)
 {
     if (op >= 0x10 && op <= 0x16) s_stream_motor  = true;
-    if (op >= 0x40 && op <= 0x47) s_stream_motor  = true;  /* gripper drives the motor */
+    if (op >= 0x40 && op <= 0x48) s_stream_motor  = true;  /* gripper drives the motor */
     if (op >= 0x20 && op <= 0x26 && op != OP_IMU_STREAM_DIS)    s_stream_imu    = true;
     if (op >= 0x30 && op <= 0x34 && op != OP_HAPTIC_STREAM_DIS) s_stream_haptic = true;
 }
@@ -102,10 +102,10 @@ static void handle_cmd(const app_cmd_t *c)
 {
     /* Motor actuation (0x10..0x15); 0x16 GET_STATUS is a read, not gated. */
     const bool motor_act_op = (c->op >= 0x10 && c->op <= 0x15);
-    /* Gripper motion ops (0x40..0x45) actuate the motor; 0x46 STOP / 0x47 read. */
-    const bool grip_move_op = (c->op >= 0x40 && c->op <= 0x45);
+    /* Gripper motion ops actuate the motor; 0x46 STOP / 0x47 read are exempt. */
+    const bool grip_move_op = (c->op >= 0x40 && c->op <= 0x45) || c->op == OP_GRIP_MOVE_DEG;
     /* Gripper ops that physically drive the jaw (exclude SET_FORCE 0x45). */
-    const bool grip_motion_op = (c->op >= 0x40 && c->op <= 0x44);
+    const bool grip_motion_op = (c->op >= 0x40 && c->op <= 0x44) || c->op == OP_GRIP_MOVE_DEG;
 
     /* Gate motor/gripper actuation and self-calibration behind an unlocked session. */
     if ((motor_act_op || grip_move_op || c->op == OP_SELF_CALIBRATE) && !s_unlocked) {
@@ -233,17 +233,21 @@ static void handle_cmd(const app_cmd_t *c)
     case OP_GRIP_SET_OPEN:  gripper_set_opening(c->f0);   reply_ack(c->seq, c->op, APP_PROTO_OK); break;
     case OP_GRIP_GRIP:      gripper_grip(c->f0);          reply_ack(c->seq, c->op, APP_PROTO_OK); break;
     case OP_GRIP_RELEASE:   gripper_release();            reply_ack(c->seq, c->op, APP_PROTO_OK); break;
-    case OP_GRIP_SET_FORCE: gripper_set_grip_force(c->f0);reply_ack(c->seq, c->op, APP_PROTO_OK); break;
+    case OP_GRIP_SET_FORCE: gripper_set_grip_current(c->f0); reply_ack(c->seq, c->op, APP_PROTO_OK); break;
     case OP_GRIP_STOP:      gripper_stop();               reply_ack(c->seq, c->op, APP_PROTO_OK); break;
+    case OP_GRIP_MOVE_DEG:  gripper_move_deg(c->f0, c->f1); reply_ack(c->seq, c->op, APP_PROTO_OK); break;
     case OP_GRIP_GET_CALIB: {
         gripper_calib_t cal; gripper_get_calib(&cal);
-        uint8_t pl[1 + 1 + 3 * 4 + 1];
+        uint8_t pl[1 + 1 + 4 * 4 + 2];
         size_t k = 0;
         pl[k++] = OP_GRIP_GET_CALIB;
         pl[k++] = cal.valid ? 1 : 0;
-        memcpy(&pl[k], &cal.pos_closed, 4);   k += 4;
-        memcpy(&pl[k], &cal.pos_open, 4);     k += 4;
-        memcpy(&pl[k], &cal.grip_force_n, 4); k += 4;
+        memcpy(&pl[k], &cal.pos_closed, 4);    k += 4;
+        memcpy(&pl[k], &cal.pos_open, 4);      k += 4;
+        memcpy(&pl[k], &cal.grip_current, 4);  k += 4;
+        float ang = gripper_get_angle_deg();
+        memcpy(&pl[k], &ang, 4);               k += 4;
+        pl[k++] = (uint8_t)(cal.span_ok ? 1 : 0) | (uint8_t)(gripper_needs_homing() ? 2 : 0);
         pl[k++] = (uint8_t)gripper_get_state();
         uint8_t f[APP_PROTO_HDR_LEN + sizeof(pl) + 2];
         size_t n = app_proto_build(f, sizeof(f), APP_PROTO_T_RESPONSE, c->seq, pl, (uint16_t)k);

@@ -86,6 +86,7 @@ static const app_bus_t   *s_bus  = NULL;
 /* Runtime CAN IDs (overridable via cfg; default to the Damiao factory values). */
 static uint32_t s_esc_id = MOTOR_ESC_ID_DEFAULT;
 static uint32_t s_mst_id = MOTOR_MST_ID_DEFAULT;
+static int      s_bitrate_kbps = 0;   /* remembered for diagnostics */
 
 static volatile bool s_enabled = false;
 
@@ -123,7 +124,30 @@ static void motor_tx(uint32_t can_id, const uint8_t *data, uint8_t len)
         .buffer_len = len,
     };
     esp_err_t err = twai_node_transmit(s_node, &frame, 10 /* ms */);
-    if (err != ESP_OK) {
+    if (err == ESP_OK) {
+        return;
+    }
+
+    /* A CAN frame must be ACKed by at least one OTHER node. With the motor
+     * unpowered, no transceiver, wrong bit rate or a broken H/L pair, every TX
+     * errors, the TX error counter saturates and the controller latches BUS-OFF
+     * — after which it refuses to transmit (ESP_ERR_INVALID_STATE) until it is
+     * explicitly recovered. Retry recovery (and log) at most once a second so a
+     * dead bus can't flood the console or wedge us until reboot. */
+    static TickType_t next_tick = 0;
+    TickType_t now = xTaskGetTickCount();
+    if ((int32_t)(now - next_tick) < 0) {   /* signed diff: wrap-safe */
+        return;
+    }
+    next_tick = now + pdMS_TO_TICKS(1000);
+
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "CAN bus-off (no ACK on the bus) - recovering. Check: motor powered? "
+                      "transceiver powered + STB pulled low? 120R termination? "
+                      "bit rate %d kbps matches the motor? CANH/CANL not swapped?",
+                 s_bitrate_kbps);
+        twai_node_recover(s_node);
+    } else {
         ESP_LOGW(TAG, "transmit (id=0x%03X) failed: %s", (unsigned)can_id, esp_err_to_name(err));
     }
 }
@@ -467,6 +491,7 @@ int motor_twai_start(const motor_twai_cfg_t *cfg, const app_bus_t *bus)
     s_bus = bus;
     s_esc_id = cfg->esc_id >= 0 ? (uint32_t)cfg->esc_id : MOTOR_ESC_ID_DEFAULT;
     s_mst_id = cfg->mst_id >= 0 ? (uint32_t)cfg->mst_id : MOTOR_MST_ID_DEFAULT;
+    s_bitrate_kbps = cfg->bitrate_kbps;
 
     twai_onchip_node_config_t node_cfg = {
         .io_cfg = {
