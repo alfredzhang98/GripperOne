@@ -43,8 +43,22 @@ extern "C" {
 #define APP_PROTO_SOF1        0x5A
 #define APP_PROTO_VERSION     0x01
 #define APP_PROTO_HDR_LEN     7      /* SOF0..LEN (before payload) */
-#define APP_PROTO_MAX_PAYLOAD 400    /* fits 28-module haptic telemetry */
+#define APP_PROTO_MAX_PAYLOAD 400    /* fits one complete 77-point tactile map */
 #define APP_PROTO_MAX_FRAME   (APP_PROTO_HDR_LEN + APP_PROTO_MAX_PAYLOAD + 2)
+
+/* Batched IMU telemetry payload:
+ *   OP(1), COUNT(1), then COUNT times [sample_seq(u32), timestamp_ms(u32), 12*f32].
+ * Seven samples fit under APP_PROTO_MAX_PAYLOAD. At the normal 100 Hz sensor /
+ * 50 Hz reporting rates a packet contains two samples. */
+#define APP_PROTO_IMU_FLOAT_COUNT       12
+#define APP_PROTO_IMU_SAMPLE_WIRE_SIZE  (2 * 4 + APP_PROTO_IMU_FLOAT_COUNT * 4)
+#define APP_PROTO_IMU_BATCH_MAX         ((APP_PROTO_MAX_PAYLOAD - 2) / APP_PROTO_IMU_SAMPLE_WIRE_SIZE)
+
+/* Haptic telemetry is one module per app_proto frame:
+ * op, index, address, status, point_count, seq, timestamp, resultant[3],
+ * then 77 interleaved raw Fx/Fy/Fz triples. */
+#define APP_PROTO_HAPTIC_META_WIRE_SIZE  (5 + 2 * 4 + 3 * 4)
+#define APP_PROTO_HAPTIC_WIRE_SIZE       (APP_PROTO_HAPTIC_META_WIRE_SIZE + HAPTIC_POINT_COUNT * 3)
 
 /* Session key gating motor actuation. NOTE: a shared constant is obfuscation,
  * not security — it stops casual/plaintext control, not a determined attacker.
@@ -107,6 +121,8 @@ size_t app_proto_build(uint8_t *out, size_t cap, uint8_t type, uint8_t seq,
 size_t app_proto_ack(uint8_t *out, size_t cap, uint8_t seq, uint8_t op, uint8_t status);
 size_t app_proto_resp_state(uint8_t *out, size_t cap, uint8_t seq, uint8_t state);
 size_t app_proto_tele_imu(uint8_t *out, size_t cap, const imu_sample_t *s);
+size_t app_proto_tele_imu_batch(uint8_t *out, size_t cap,
+                                const imu_sample_t *samples, size_t count);
 size_t app_proto_tele_haptic(uint8_t *out, size_t cap, const haptic_sample_t *s);
 size_t app_proto_tele_motor(uint8_t *out, size_t cap, const motor_status_t *s);
 

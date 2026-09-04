@@ -13,7 +13,7 @@
     "--query-driver=**",
     "--compile-commands-dir=f:\\github\\gripper_Robotiq\\build"
   ],
-  "idf.currentSetup": "F:\\esp\\v6.0.2\\esp-idf",
+  "idf.currentSetup": "D:\\SDKs\\.espressif\\v6.0\\esp-idf",
   "idf.flashType": "UART",
-  "idf.portWin": "COM5"
+  "idf.portWin": "COM13"
 }

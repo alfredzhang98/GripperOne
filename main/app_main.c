@@ -1,110 +1,104 @@
 /**
  * @file app_main.c
- * @brief Firmware entry point for the gripper_plus controller (XIAO ESP32-C6).
+ * @brief Firmware entry point — IMU + two-sensor haptic bring-up build.
  *
- * Responsibilities kept deliberately thin:
- *   1. Bring up the board (NVS, banner).
- *   2. Create the inter-task message bus.
- *   3. Hand each driver its pin/baud config (from app_pins.h / app_config.h)
- *      and start it.
- *   4. Start the supervisor state machine and the selected user transport.
+ * The remaining motor/gripper subsystems sit in
+ * components/ but are not started and have no command cases here. ESP-IDF may
+ * still compile auto-discovered components into libraries; because nothing
+ * references those libraries, they add no tasks or runtime output. That is the
+ * useful isolation for bring-up: every application action here belongs to a
+ * sensor path. Restoring a subsystem means restoring its start call, supervisor
+ * cases, and component dependencies together.
  *
- * All hardware logic lives in components/. This file only owns configuration
- * and wiring.
+ * Data flow in this build:
  *
- * Data flow:
- *   haptic_uart_task --\
- *   imu_uart_task -----+--> [bus queues] --> supervisor_task --> gripper --> motor_twai
- *   motor_twai_task --/                           ^
- *   transport (UART/BLE/WiFi) --> ctrl_q ---------+
+ *   IMU --UART--> imu_uart_task --(imu_sample_t)--> imu_q --\
+ *                                                            > supervisor_task
+ *   host --USB--> transport_uart --(app_cmd_t)-----> ctrl_q -/       |
+ *                       ^                                            |
+ *                       \------- ACK / telemetry (app_proto) --------/
+ *
+ * supervisor_task is the sole consumer of imu_q — a queue hands each message
+ * to exactly one reader, so nothing here may drain it as well — and the sole
+ * place a decoded command becomes a driver call. This file only owns
+ * configuration and start-up order.
+ *
+ * Nothing calls imu_uart_set_angle_ref() at boot. That is the roll/pitch zero
+ * (WIT CALSW 0x08, persisted in the unit's own flash), and it matters here:
+ * the module is mounted inverted, so without a reference roll sits at ±180°,
+ * right on the wrap-around. Send OP_IMU_SET_REF (0x25) once from the host with
+ * the gripper held in its home pose and still for ~3.2 s.
  */
+#include "driver/uart.h"                /* UART_NUM_x, used by app_config.h */
+#include "esp_err.h"
 #include "esp_log.h"
-#include "driver/uart.h"          /* for UART_NUM_x used in app_config.h */
 
 #include "app_pins.h"
 #include "app_config.h"
 
 #include "board.h"
 #include "app_protocol.h"
-#include "haptic_uart.h"
 #include "imu_uart.h"
-#include "motor_twai.h"
-#include "gripper.h"
+#include "haptic_uart.h"
 #include "app_supervisor.h"
-
 #include "transport_uart.h"
-#include "wireless_ble.h"
-#include "wireless_wifi.h"
 
 static const char *TAG = "app_main";
 
-/* The message bus is process-wide and long-lived. */
+/* The message bus is process-wide and long-lived. This build uses imu_q,
+ * haptic_q and ctrl_q; motor_status_q remains allocated but idle. */
 static app_bus_t s_bus;
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== gripper_plus firmware starting ===");
+    ESP_LOGI(TAG, "=== gripper_plus firmware starting (IMU + haptic bring-up) ===");
 
     ESP_ERROR_CHECK(board_init());
-    ESP_ERROR_CHECK(app_bus_init(&s_bus));
+    ESP_ERROR_CHECK(app_bus_init(&s_bus));   /* must precede every start below */
 
-    /* ---- Haptic / pressure high-speed UART ---- */
-    const haptic_uart_cfg_t haptic_cfg = {
-        .uart_port   = HAPTIC_UART_PORT,
-        .tx_gpio     = PIN_HAPTIC_UART_TX,
-        .rx_gpio     = PIN_HAPTIC_UART_RX,
-        .baud_rate   = HAPTIC_UART_BAUD,
-        .rx_buf_size = UART_RX_BUFFER_SIZE,
-        .tx_buf_size = UART_TX_BUFFER_SIZE,
-        .task_stack  = TASK_STACK_HAPTIC,
-        .task_prio   = TASK_PRIO_HAPTIC,
-    };
-    ESP_ERROR_CHECK(haptic_uart_start(&haptic_cfg, &s_bus));
-
-    /* ---- IMU UART ---- */
+    /* ---- IMU UART: produces imu_sample_t onto bus->imu_q ---- */
     const imu_uart_cfg_t imu_cfg = {
         .uart_port   = IMU_UART_PORT,
         .tx_gpio     = PIN_IMU_UART_TX,
         .rx_gpio     = PIN_IMU_UART_RX,
-        .baud_rate   = IMU_UART_BAUD,
+        .baud_rate   = IMU_UART_BOOT_BAUD,
+        .run_baud    = IMU_UART_RUN_BAUD,
+        .rate_hz     = IMU_OUT_RATE_HZ,
         .rx_buf_size = UART_RX_BUFFER_SIZE,
         .task_stack  = TASK_STACK_IMU,
         .task_prio   = TASK_PRIO_IMU,
     };
     ESP_ERROR_CHECK(imu_uart_start(&imu_cfg, &s_bus));
 
-    /* ---- Motor control over TWAI (needs external CAN transceiver) ---- */
-    const motor_twai_cfg_t motor_cfg = {
-        .tx_gpio      = PIN_MOTOR_TWAI_TX,
-        .rx_gpio      = PIN_MOTOR_TWAI_RX,
-        .bitrate_kbps = MOTOR_TWAI_BITRATE_KBPS,
-        .esc_id       = MOTOR_TWAI_ESC_ID,
-        .mst_id       = MOTOR_TWAI_MST_ID,
-        .task_stack   = TASK_STACK_MOTOR,
-        .task_prio    = TASK_PRIO_MOTOR,
+    /* ---- Two CP-M3025 sensors on one device-addressed UART bus. ---- */
+    const haptic_uart_cfg_t haptic_cfg = {
+        .uart_port = HAPTIC_UART_PORT,
+        .tx_gpio = PIN_HAPTIC_UART_TX,
+        .rx_gpio = PIN_HAPTIC_UART_RX,
+        .baud_rate = HAPTIC_UART_BAUD,
+        .rx_buf_size = UART_RX_BUFFER_SIZE,
+        .tx_buf_size = UART_TX_BUFFER_SIZE,
+        .task_stack = TASK_STACK_HAPTIC,
+        .task_prio = TASK_PRIO_HAPTIC,
+        .poll_hz = HAPTIC_POLL_HZ,
+        .ring_module = HAPTIC_RING_MODULE,
+        .little_module = HAPTIC_LITTLE_MODULE,
     };
-    ESP_ERROR_CHECK(motor_twai_start(&motor_cfg, &s_bus));
+    ESP_ERROR_CHECK(haptic_uart_start(&haptic_cfg, &s_bus));
 
-    /* ---- High-level gripper app (force-position mode, loads calib from flash) ---- */
-    ESP_ERROR_CHECK(gripper_init());
-
-    /* ---- Supervisor state machine (drains sensors, ticks the gripper) ---- */
+    /* ---- Supervisor: drains sensor queues, executes commands off ctrl_q ---- */
     const app_supervisor_cfg_t supervisor_cfg = {
-        .task_stack  = TASK_STACK_SUPERVISOR,
-        .task_prio   = TASK_PRIO_SUPERVISOR,
-        .overforce_n = GRIPPER_OVERFORCE_N,
+        .task_stack = TASK_STACK_SUPERVISOR,
+        .task_prio  = TASK_PRIO_SUPERVISOR,
     };
     ESP_ERROR_CHECK(app_supervisor_start(&s_bus, &supervisor_cfg));
 
-    /* ---- User-layer transport (one of UART / BLE / Wi-Fi; see APP_TRANSPORT) ---- */
-#if   APP_TRANSPORT == TRANSPORT_BLE
-    ESP_ERROR_CHECK(wireless_ble_start(&s_bus, BLE_DEVICE_NAME));
-#elif APP_TRANSPORT == TRANSPORT_WIFI
-    ESP_ERROR_CHECK(wireless_wifi_start(&s_bus));
-#else  /* TRANSPORT_UART (default): app_proto over the native USB-Serial/JTAG */
+    /* ---- User transport: app_proto over the native USB-Serial/JTAG.
+     * Started last so the supervisor is already draining ctrl_q by the time a
+     * host can send anything. ---- */
     ESP_ERROR_CHECK(transport_uart_start(&s_bus));
-#endif
 
-    ESP_LOGI(TAG, "=== all modules started ===");
+    ESP_LOGI(TAG, "=== IMU %d Hz; tactile 2 x 7x11 @ %d Hz; app_proto on USB ===",
+             IMU_OUT_RATE_HZ, HAPTIC_POLL_HZ);
     /* app_main returns; FreeRTOS tasks keep running. */
 }

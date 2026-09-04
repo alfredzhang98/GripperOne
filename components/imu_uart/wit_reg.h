@@ -131,8 +131,7 @@
 #define IMU_REG_ALARMPIN   0x5D   /* RW  alarm pin mapping */
 #define IMU_REG_YMIN       0x5E   /* RW  Y-angle alarm min */
 #define IMU_REG_YMAX       0x5F   /* RW  Y-angle alarm max */
-#define IMU_REG_GYROCALITHR 0x61  /* RW  gyro still threshold (val/1000 deg/s); also
-                                     gyro auto-cal switch: write 0=on(default), 1=off */
+#define IMU_REG_GYROCALITHR 0x61  /* RW  this model: gyro auto-cal, 0=on 1=off */
 #define IMU_REG_ALARMLEVEL 0x62   /* RW  angle alarm level */
 #define IMU_REG_GYROCALTIME 0x63  /* RW  gyro auto-cal time */
 #define IMU_REG_TRIGTIME   0x68   /* RW  alarm continuous-trigger time */

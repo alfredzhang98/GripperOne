@@ -31,12 +31,21 @@
 
 /* -------------------------------------------------------------------------
  * Haptic / pressure sensor board  (high-speed UART link)
- * TX/RX are named from the XIAO's point of view:
- *   XIAO TX (D6, GPIO16) -> sensor RX
- *   XIAO RX (D7, GPIO17) <- sensor TX
+ * These two are deliberately the opposite way round from the XIAO silkscreen,
+ * and that is not a mistake. The integration board's 4-pin header is labelled
+ * with its OWN pin functions (pin1 TX, pin2 RX, pin3 GND, pin4 VCC) and the
+ * harness joins them label to label, so D6 lands on the board's transmitter
+ * and D7 on its receiver:
+ *
+ *   XIAO D7 (GPIO17) -> board header pin2 RX   so GPIO17 is the ESP's TX
+ *   XIAO D6 (GPIO16) <- board header pin1 TX   so GPIO16 is the ESP's RX
+ *
+ * Confirmed on hardware: with this mapping the board answers a version read
+ * with "ADAPTER_FW02.26"; with the two swapped it is silent at every baud.
+ * If the harness is ever rewired to cross the pair, swap these back.
  * ------------------------------------------------------------------------- */
-#define PIN_HAPTIC_UART_TX      16  /* XIAO D6 */
-#define PIN_HAPTIC_UART_RX      17  /* XIAO D7 */
+#define PIN_HAPTIC_UART_TX      17  /* XIAO D7 -> board header RX */
+#define PIN_HAPTIC_UART_RX      16  /* XIAO D6 <- board header TX */
 
 /* -------------------------------------------------------------------------
  * IMU board (JY901P / MPU9250+ with on-board fusion), UART link.

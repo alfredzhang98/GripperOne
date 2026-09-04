@@ -20,6 +20,13 @@ uint16_t app_proto_crc16(const uint8_t *data, size_t len)
 
 /* ---- little-endian helpers ---------------------------------------------- */
 static inline void put_u16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
+static inline void put_u32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
 static inline uint16_t get_u16(const uint8_t *p)   { return (uint16_t)(p[0] | (p[1] << 8)); }
 static inline uint32_t get_u32(const uint8_t *p)
 {
@@ -89,34 +96,60 @@ size_t app_proto_resp_state(uint8_t *out, size_t cap, uint8_t seq, uint8_t state
     return app_proto_build(out, cap, APP_PROTO_T_RESPONSE, seq, pl, sizeof(pl));
 }
 
-size_t app_proto_tele_imu(uint8_t *out, size_t cap, const imu_sample_t *s)
+size_t app_proto_tele_imu_batch(uint8_t *out, size_t cap,
+                                const imu_sample_t *samples, size_t count)
 {
-    uint8_t pl[1 + 12 * 4];  /* op + roll,pitch + accel[3] + lin_accel[3] + gyro[3] + temp */
+    if (!samples || count == 0 || count > APP_PROTO_IMU_BATCH_MAX) {
+        return 0;
+    }
+    uint8_t pl[2 + APP_PROTO_IMU_BATCH_MAX * APP_PROTO_IMU_SAMPLE_WIRE_SIZE];
     size_t k = 0;
     pl[k++] = OP_IMU_GET;
-    k += put_f32(&pl[k], s->roll);
-    k += put_f32(&pl[k], s->pitch);
-    for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->accel[i]);
-    for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->lin_accel[i]);
-    for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->gyro[i]);
-    k += put_f32(&pl[k], s->temp);
-    return app_proto_build(out, cap, APP_PROTO_T_TELEMETRY, 0, pl, (uint16_t)k);
+    pl[k++] = (uint8_t)count;
+    for (size_t n = 0; n < count; n++) {
+        const imu_sample_t *s = &samples[n];
+        put_u32(&pl[k], s->seq);          k += 4;
+        put_u32(&pl[k], s->timestamp_ms); k += 4;
+        k += put_f32(&pl[k], s->roll);
+        k += put_f32(&pl[k], s->pitch);
+        for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->accel[i]);
+        for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->lin_accel[i]);
+        for (int i = 0; i < 3; i++) k += put_f32(&pl[k], s->gyro[i]);
+        k += put_f32(&pl[k], s->temp);
+    }
+    return app_proto_build(out, cap, APP_PROTO_T_TELEMETRY,
+                           (uint8_t)samples[count - 1].seq, pl, (uint16_t)k);
+}
+
+size_t app_proto_tele_imu(uint8_t *out, size_t cap, const imu_sample_t *s)
+{
+    return app_proto_tele_imu_batch(out, cap, s, 1);
 }
 
 size_t app_proto_tele_haptic(uint8_t *out, size_t cap, const haptic_sample_t *s)
 {
-    uint8_t pl[1 + 2 + HAPTIC_MAX_MODULES * 3 * 4];
-    size_t k = 0;
-    uint16_t n = s->module_count > HAPTIC_MAX_MODULES ? HAPTIC_MAX_MODULES : s->module_count;
-    pl[k++] = OP_HAPTIC_GET;
-    pl[k++] = s->error_code;
-    pl[k++] = (uint8_t)n;
-    for (uint16_t i = 0; i < n; i++) {
-        k += put_f32(&pl[k], s->force[i].fx);
-        k += put_f32(&pl[k], s->force[i].fy);
-        k += put_f32(&pl[k], s->force[i].fz);
+    if (!s || s->point_count != HAPTIC_POINT_COUNT) {
+        return 0;
     }
-    return app_proto_build(out, cap, APP_PROTO_T_TELEMETRY, 0, pl, (uint16_t)k);
+    uint8_t pl[APP_PROTO_HAPTIC_WIRE_SIZE];
+    size_t k = 0;
+    pl[k++] = OP_HAPTIC_GET;
+    pl[k++] = s->sensor_index;
+    pl[k++] = s->device_addr;
+    pl[k++] = s->status;
+    pl[k++] = s->point_count;
+    put_u32(&pl[k], s->seq);          k += 4;
+    put_u32(&pl[k], s->timestamp_ms); k += 4;
+    for (size_t axis = 0; axis < 3; axis++) {
+        k += put_f32(&pl[k], s->resultant[axis]);
+    }
+    for (size_t i = 0; i < HAPTIC_POINT_COUNT; i++) {
+        pl[k++] = (uint8_t)s->fx[i];
+        pl[k++] = (uint8_t)s->fy[i];
+        pl[k++] = s->fz[i];
+    }
+    return app_proto_build(out, cap, APP_PROTO_T_TELEMETRY,
+                           (uint8_t)s->seq, pl, (uint16_t)k);
 }
 
 size_t app_proto_tele_motor(uint8_t *out, size_t cap, const motor_status_t *s)
@@ -152,13 +185,32 @@ static void decode_args(app_cmd_t *cmd, const uint8_t *pl, uint16_t plen)
     case OP_SESSION_UNLOCK:
         if (plen >= 1 + 4) cmd->u0 = get_u32(&pl[1]);
         break;
-    case OP_SET_TELEM_RATE:
-    case OP_HAPTIC_SET_CONTENT:
-    case OP_IMU_SET_AXIS:
+    case OP_IMU_POWON_SET:
+    case OP_IMU_SET_RATE:
         if (plen >= 1 + 2) cmd->u0 = get_u16(&pl[1]);
         break;
     default:
         break;   /* opcode-only commands */
+    }
+}
+
+static uint16_t min_command_payload(uint8_t op)
+{
+    switch (op) {
+    case OP_MOTOR_SET_TARGET:
+    case OP_GRIP_SET_OPEN:
+    case OP_GRIP_GRIP:
+    case OP_GRIP_SET_FORCE:
+    case OP_SESSION_UNLOCK:
+        return 1 + 4;
+    case OP_MOTOR_SET_GAINS:
+    case OP_GRIP_MOVE_DEG:
+        return 1 + 8;
+    case OP_IMU_POWON_SET:
+    case OP_IMU_SET_RATE:
+        return 1 + 2;
+    default:
+        return 1;
     }
 }
 
@@ -209,6 +261,7 @@ void app_proto_feed(app_proto_parser_t *p, uint8_t transport,
             uint16_t rx_crc = get_u16(&p->buf[frame_len - 2]);
             uint16_t calc = app_proto_crc16(&p->buf[2], (size_t)(APP_PROTO_HDR_LEN - 2) + plen);
             uint8_t  ver = p->buf[2];
+            uint8_t  type = p->buf[3];
             uint8_t  seq = p->buf[4];
             uint8_t  op  = plen >= 1 ? p->buf[APP_PROTO_HDR_LEN] : 0;
 
@@ -224,8 +277,15 @@ void app_proto_feed(app_proto_parser_t *p, uint8_t transport,
             }
             if (ver != APP_PROTO_VERSION) {
                 emit_error(seq, op, APP_PROTO_ERR_VERSION);
+            } else if (type != APP_PROTO_T_COMMAND) {
+                /* This parser is the device's command ingress. Do not let a
+                 * syntactically valid RESPONSE/TELEMETRY/ACK frame execute as
+                 * a command merely because its first payload byte is an op. */
+                emit_error(seq, op, APP_PROTO_ERR_ARG);
             } else if (plen < 1) {
                 emit_error(seq, op, APP_PROTO_ERR_OPCODE);
+            } else if (plen < min_command_payload(op)) {
+                emit_error(seq, op, APP_PROTO_ERR_ARG);
             } else {
                 app_cmd_t cmd = { .seq = seq, .op = op, .transport = transport };
                 decode_args(&cmd, &p->buf[APP_PROTO_HDR_LEN], plen);

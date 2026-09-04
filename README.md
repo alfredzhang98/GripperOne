@@ -20,8 +20,8 @@
 | 功能 | XIAO 引脚 | GPIO | 用的外设 |
 | --- | --- | --- | --- |
 | USB 调试 / 下载 | USB-C | GPIO12/13 内部 USB | USB CDC/JTAG |
-| 触觉信息高速通信板子（UART0） | D6 TX / D7 RX | GPIO16 / GPIO17 | 普通 UART0 |
-| IMU JY901P / MPU9250+（UART1，内置 MCU 算法校准） | D1 TX / D0 RX | GPIO1 / GPIO0 | 普通 UART1，经 GPIO Matrix |
+| 触觉 高速通信集成板 | D6 TX / D7 RX | GPIO16 / GPIO17 | UART1 @ 921600 |
+| IMU JY901P（内置 MCU 算法校准） | D1 TX / D0 RX | GPIO1 / GPIO0 | UART0，经 GPIO Matrix |
 | SH1106 驱动的 1.3 inch OLED 屏幕（I2C）（非必须） | D4 SDA / D5 SCL | GPIO22 / GPIO23 | I2C |
 | 电机控制通信（TWAI） | D2 TX / D3 RX | GPIO2 / GPIO21 | TWAI |
 
@@ -56,8 +56,8 @@ gripper_plus/
    ├─ app_protocol/          # shared types + queue "bus" + user protocol codec
    │                         #   (app_proto.c: framing/CRC/opcodes for BLE+WiFi)
    ├─ board_xiao_esp32c6/    # board bring-up (NVS, banner)
-   ├─ haptic_uart/           # UART1 921600, 0xAA56 auto-push + LRC parser
-   ├─ imu_uart/              # UART0 9600, WitMotion 11-byte frame parser
+   ├─ haptic_uart/           # UART1 921600, integration-board register polling
+   ├─ imu_uart/              # UART0 boot 9600 -> run 115200, WIT 11-byte parser
    ├─ motor_twai/            # TWAI (CAN) DM-J4310 MIT-mode codec + API
    ├─ oled_sh1106/           # optional I2C OLED (APP_ENABLE_OLED)
    ├─ wireless_ble/          # NimBLE GATT control interface
@@ -75,18 +75,65 @@ names, not ESP32 controller numbers.
 | Schematic net | Function                | XIAO pin | GPIO | ESP peripheral        |
 | ------------- | ----------------------- | -------- | ---- | --------------------- |
 | (USB-C)       | USB debug / download    | USB-C    | int. | USB Serial/JTAG       |
-| UART2_rx      | IMU link RX (XIAO←IMU)  | D0       | 0    | UART0 @ 9600          |
-| UART2_tx      | IMU link TX (XIAO→IMU)  | D1       | 1    | UART0 @ 9600          |
+| UART2_rx      | IMU link RX (XIAO←IMU)  | D0       | 0    | UART0, 9600→115200    |
+| UART2_tx      | IMU link TX (XIAO→IMU)  | D1       | 1    | UART0, 9600→115200    |
 | TWAI TX       | Motor CAN TX            | D2       | 2    | TWAI (needs xcvr)     |
 | TWAI RX       | Motor CAN RX            | D3       | 21   | TWAI (needs xcvr)     |
 | SDA           | OLED I2C SDA            | D4       | 22   | I2C0 @ 400 kHz        |
 | SCL           | OLED I2C SCL            | D5       | 23   | I2C0 @ 400 kHz        |
-| UART1_tx      | Haptic TX (XIAO→board)  | D6       | 16   | UART1 @ 921600        |
-| UART1_rx      | Haptic RX (XIAO←board)  | D7       | 17   | UART1 @ 921600        |
+| UART1_rx      | Haptic RX (XIAO←board)  | D6       | 16   | UART1 @ 921600        |
+| UART1_tx      | Haptic TX (XIAO→board)  | D7       | 17   | UART1 @ 921600        |
 
 TX/RX are named from the XIAO's perspective (XIAO TX → peripheral RX). Power:
-3V3_out (pin 11) and GND (pin 12) feed the sensor boards; a 10 µF bulk cap sits
-on 3V3. VBUS and D8–D10 are unused.
+3V3_out (pin 11) and GND (pin 12) feed the IMU; a 10 µF bulk cap sits on 3V3.
+**The haptic integration board must not be run from 3V3** — see the wiring note
+below. D8–D10 are unused.
+
+Haptic wiring: D6/D7 go to the integration board's 4-pin UART header
+(connector AFC12-S04DCA-00; one row of four, `pin1 TX, pin2 RX, pin3 GND,
+pin4 VCC` — the silkscreen staggers the labels onto two lines but the pins are
+in a single row). **The haptic TX/RX assignment is the opposite way round from
+the XIAO silkscreen**: the header names the board's own pin functions and this
+harness joins them label to label, so D6 sits on the board's transmitter and
+D7 on its receiver. The firmware therefore drives GPIO17 as TX and GPIO16 as
+RX (see `main/app_pins.h`). Verified on hardware — with this mapping a version
+read returns `ADAPTER_FW02.26`; with the pair swapped the board is silent at
+every baud rate. Tie the grounds. The board is full duplex and takes its own
+4.5–5 V supply on the WAFER-HY2.0-2PWB connector; it is not powered from the
+XIAO's 3V3. The two sensors plug into the board's **无名指** and **小拇指**
+connectors, and the board handles the SPI side of each module, so no CS or
+pull-up wiring is needed on the ESP.
+
+> ### ⚠️ The integration board needs 5 V, and 3V3 fails in a way that looks like a broken sensor
+>
+> §4.3 specifies **4.5–5 V** on the WAFER-HY2.0-2PWB connector. Run it from the
+> XIAO's 3V3 rail instead and the board still boots, still answers on UART, still
+> returns its version string, and still enumerates **one** sensor perfectly — it
+> just silently fails to find the second one. Use VBUS/5 V, never 3V3.
+>
+> What this looks like when you get it wrong, and why none of it points at the
+> supply:
+>
+> - `0x0010`–`0x0013` comes back `00 10 00 00`: only the ring module is mapped.
+> - The missing slot's point count (`0x0050`) reads 0 and its per-module error
+>   code (`0x0700 + n×2`) reads `0x0001` — the same code every genuinely empty
+>   slot reports. The board is not reporting a fault; it simply never saw it.
+> - Reads of the missing module's data area still succeed, returning 231 zero
+>   bytes, so the link looks perfectly healthy.
+> - The **later** module in the board's fixed scan order is the one that drops
+>   (ring is slot 12, little is slot 16), which is the tell: the first sensor
+>   brings the rail down far enough that the second never enumerates.
+> - Over USB the same board finds both, because the PC supplies a proper 5 V.
+>   That difference between the two links is the supply, not the protocol.
+>
+> The map is latched **once, at the board's own power-up** (§4.6), so fixing the
+> supply is not enough on its own — the board has to lose power completely and
+> come back up on 5 V before it will rescan. Adding a second supply while it is
+> still running changes nothing.
+
+If the link ever goes quiet, the driver's start-up discovery falls back to a
+sweep of both pin orientations x six baud rates x both candidate dialects and
+hex-dumps whatever replies, which is how the mapping above was established.
 
 Controller assignment in firmware: haptic link → `UART_NUM_1`, IMU link →
 `UART_NUM_0` (the C6 has two HP UART controllers; the console is on USB
@@ -115,11 +162,11 @@ idf.py build
 
 ## Tactile sensor GUI (host tool)
 
-`tools/gui/paxini_gui.html` is a standalone Web Serial console for the PaXini
-CP-M3025 (77-point) sensor via the 通信盒: live force map, resultant-force
-scope, calibration, and CSV capture. Open it in Chrome/Edge and connect to the
-通信盒's USB port. See `tools/gui/README.md`. It talks to the sensor board
-directly (not through the ESP32).
+`host/2_haptic_uart.py` is the PySide6 minimum-verification GUI for two PaXini
+CP-M3025 modules through the ESP32: left is the ring finger, right is the little
+finger. It displays both 7×11 Fz maps, per-point Fx/Fy shear arrows, resultant
+force curves, actual per-module rates and sequence loss. Install
+`host/requirements.txt`, flash the firmware, then run `python host/2_haptic_uart.py`.
 
 ## Flash & monitor
 
@@ -229,21 +276,26 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 
 | 操作码 | 名称 | 参数 | 说明 |
 | --- | --- | --- | --- |
-| `0x20` | IMU_STREAM_EN | 无 | 开启 IMU 遥测流 |
-| `0x21` | IMU_STREAM_DIS | 无 | 关闭 IMU 遥测流 |
-| `0x22` | IMU_GET | 无 | 立刻回一帧 IMU 遥测 |
-| `0x23` | IMU_CALIBRATE | 无 | IMU 自校准（加计/陀螺，保持静止） |
-| `0x24` | IMU_SET_ZERO | 无 | 偏航角 / Z 轴角度归零 |
+| `0x20` | IMU_STREAM_EN | 无 | 开启 IMU → USB/上位机遥测流（上电默认关闭，必须显式开启） |
+| `0x21` | IMU_STREAM_DIS | 无 | 关闭 USB/上位机遥测流；IMU → ESP32 仍以配置频率采样 |
+| `0x22` | IMU_GET | 无 | 立刻返回最近一帧完整 IMU 遥测 |
+| `0x23` | IMU_CALIBRATE | 无 | 加速度计校准，模块需水平静止 |
+| `0x25` | IMU_SET_REF | 无 | 将当前 Roll/Pitch 保存为参考零点 |
+| `0x27` | IMU_POWON_SET | `u0=0/1` | 设置 IMU 上电自动输出；首次启动默认 `0`，用户设置保存在 ESP NVS |
+| `0x28` | IMU_SET_RATE | `u0=Hz` | 设置本次会话的 IMU 输出率：10/20/50/100/200 Hz |
+| `0x29` | IMU_ACQ_EN | 无 | 恢复 IMU → ESP32 数据帧，使用当前设置的输出率 |
+| `0x2A` | IMU_ACQ_DIS | 无 | 停止 IMU → ESP32 数据帧；仅当前会话，不写 IMU Flash |
 
 ### 触觉类 `0x3-`
 
 | 操作码 | 名称 | 参数 | 说明 |
 | --- | --- | --- | --- |
-| `0x30` | HAPTIC_STREAM_EN | 无 | 开启触觉遥测流（并使能传感器自动回传） |
-| `0x31` | HAPTIC_STREAM_DIS | 无 | 关闭触觉遥测流 |
-| `0x32` | HAPTIC_GET | 无 | 立刻回一帧触觉遥测 |
-| `0x33` | HAPTIC_SET_CONTENT | u16 | 选择回传内容（bit0=合力，bit1=分布力） |
-| `0x34` | HAPTIC_CALIBRATE | 无 | 触觉模块清零/校准 |
+| `0x30` | HAPTIC_STREAM_EN | 无 | 开启 ESP32→USB 触觉遥测；要求两指都有新鲜数据 |
+| `0x31` | HAPTIC_STREAM_DIS | 无 | 关闭 USB 触觉遥测；不改变传感器轮询 |
+| `0x32` | HAPTIC_GET | 无 | 返回两指各自最近的一帧完整点阵 |
+| `0x34` | HAPTIC_CALIBRATE | 无 | 两个触觉模块空载清零/标定 |
+| `0x35` | HAPTIC_ACQ_EN | 无 | 恢复传感器→ESP32 请求/应答轮询 |
+| `0x36` | HAPTIC_ACQ_DIS | 无 | 停止轮询；不改变 USB 流开关 |
 
 ### 夹爪高级动作 `0x4-`（`0x40~0x46` 需解锁，`0x47` 只读）
 
@@ -258,20 +310,20 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 | `0x46` | GRIP_STOP | 无 | 保持当前位置 |
 | `0x47` | GRIP_GET_CALIB | 无 | 读取标定结果，回 RESPONSE（有效位+闭合位+最大位+默认力+夹爪状态） |
 
-## 三、自动启用（auto-enable）
+## 三、遥测显式启用
 
-只要上位机对某个子系统发了命令，`supervisor` 会**自动打开该子系统的遥测流**，无需单独再发"开流"指令：
+固件上电后 IMU 与触觉 USB 遥测都默认关闭，GUI 建立连接也不会自动开流。只有显式发送对应的 `STREAM_EN` 才会向 USB/上位机连续上报；读取、设置和校准命令不会隐式开启连续遥测。
 
-- 发任意 **电机** 命令（`0x10~0x16`）→ 自动开电机遥测流
-- 发任意 **IMU** 命令（`0x20~0x24`，`STREAM_DIS` 除外）→ 自动开 IMU 遥测流
-- 发任意 **触觉** 命令（`0x30~0x34`，`STREAM_DIS` 除外）→ 自动开触觉遥测流
+USB 上报与 IMU → ESP32 采集是两个独立开关：关闭其中一个不会自动修改另一个。开启 USB 上报时会检查最近 500 ms 内是否收到过有效 IMU 样本；没有新鲜数据时返回 `ERR_STATE`。关闭连续上报后仍可用 `IMU_GET` 获取一帧近期有效样本。
+
+触觉同样把“CP-M3025→ESP32 轮询”和“ESP32→USB 上报”分开。上电默认轮询两指、USB 触觉流关闭；开启流时两指必须都在最近 500 ms 内成功响应，否则返回 `ERR_STATE`。`HAPTIC_GET` 一次返回两个独立遥测帧。
 
 ## 四、遥测数据格式（TYPE=`0x02`，PAYLOAD 全小端 float32）
 
 | 遥测 | PAYLOAD 布局 |
 | --- | --- |
 | IMU（op `0x22`） | `op` + `yaw` + `pitch` + `roll` + `q0 q1 q2 q3`（共 7 个 float，单位：角度°/单位四元数） |
-| 触觉（op `0x32`） | `op` + `错误码(u8)` + `模块数 N(u8)` + N×(`fx fy fz` float，单位 N) |
+| 触觉（op `0x32`） | 每帧一个模组：`op,index,address,status,point_count` + `seq(u32),timestamp_ms(u32)` + 合力 `Fx,Fy,Fz`(3×f32) + 77×(`Fx:i8,Fy:i8,Fz:u8`)；点值 0.1 N/LSB |
 | 电机（op `0x16`） | `op` + `使能(u8)` + `位置` + `速度` + `力矩`（3 个 float）+ `错误码(u8)` |
 
 ## 五、应答 / 错误码（ACK 与 ERROR 的 PAYLOAD = `回显操作码` + `状态码`）
@@ -415,16 +467,44 @@ IDLE ──grip──▶ GRIPPING ─接触/卡住─▶ HOLDING(恒力) ──s
 The real wire formats were decoded from `source_files/` and are now implemented
 (not stubs):
 
-- **Haptic (PaXini PX-6AX GEN3, sensor `CP-M3025-Core / PXSR-STDCP03B`, 77
-  points, via the 高速通信集成板 / 通信盒, `通信盒通信协议_V1.0.5`)** — 921600 8N1. The driver
-  writes register `0x0016 = 0x01` (resultant-force content) and `0x0017 = 0x01`
-  (enable auto-push), then runs a streaming parser that syncs on the `0xAA 0x56`
-  auto-push header, validates the LRC (`~sum + 1`), reads the little-endian
-  frame-length field, and decodes each connected module's resultant force
-  (Fx/Fy/Fz as int16-LE × 0.1 N) into `haptic_sample_t`.
-- **IMU (WitMotion JY901P, WIT standard protocol)** — 9600 8N1. Fixed 11-byte
-  frames (`0x55` + type + 4×int16-LE + 8-bit sum checksum). Decodes `0x53` angle
-  (roll/pitch/yaw = int16/32768×180°) and `0x59` quaternion (int16/32768).
+- **Haptic (PaXini PX-6AX GEN3)** — the ESP talks to the **高速通信集成板**
+  (high-speed communication integration board) at 921600 8N1, not to a sensor
+  module's own pins, so it speaks the board's register protocol
+  (`通信盒通信协议` §4.4), not the sensor-direct `0x7B`/`0x79` protocol in §5.4
+  of the sensor manual:
+
+  | | frame |
+  |---|---|
+  | request | `55 AA \| 00 \| func \| reg_addr(2,LE) \| num(2,LE) \| data[N] \| LRC` |
+  | response | `AA 55 \| 00 \| func \| reg_addr(2,LE) \| num(2,LE) \| data[M] \| LRC` |
+  | auto-push | `AA 56 \| 00 \| frame_len(2,LE) \| total_err(1) \| data[M] \| LRC` |
+
+  `func` is `0x03` read (max 512 B), `0x10` write (max 10 B), `0x17` tare; LRC
+  is the two's complement of the sum of every preceding byte. A module is a slot
+  in the board's fixed 28-module order (§4.6) — thumb, index, middle, ring,
+  little, palm, each finger as proximal/middle/fingertip/nail — so a CP-M3025
+  is its finger's *proximal* module: ring = 12, little = 16.
+
+  | | 无名指近节 (12) | 小拇指近节 (16) |
+  |---|---|---|
+  | 分布力 77×3 = 231 B | `0x2800` | `0x3000` |
+  | 合力 3×int16 | `0x0548` | `0x0560` |
+  | 点数 uint16 | `0x0048` | `0x0050` |
+  | 连接位 | `0x0011` bit4 | `0x0012` bit0 |
+
+  At start-up the driver disables auto-push, reads the version string, the
+  module map at `0x0010`–`0x0013` and each slot's point count, and logs a
+  specific error if a slot is empty or is not a 77-point module. It then polls
+  both modules at 80 Hz with two reads each. Distributed points are
+  `Fx:i8, Fy:i8, Fz:u8`; the 6-byte resultant is three int16 of which only the
+  low byte carries the value (matching the vendor's own `Hand_UI` parser). All
+  values are 0.1 N/LSB. `host/2_haptic_uart.py --selftest` checks these frames
+  against the vendor's documented example commands.
+- **IMU (WitMotion JY901P, WIT standard protocol)** — boot at 9600 8N1, then
+  switch the powered session to 115200 after identification. Fixed 11-byte
+  frames (`0x55` + type + 4×int16-LE + 8-bit sum checksum). The sensor runs at
+  100 Hz. Every 20 ms the supervisor batches all accumulated samples into one
+  USB telemetry frame, normally producing 50 packets/s containing 100 samples/s.
 - **Motor (Damiao DM-J4310-2EC)** — TWAI CAN 2.0A @ 1 Mbps. Enable/disable
   frames (`…FC` / `…FD`), MIT-mode command packing (position/velocity/Kp/Kd/
   torque via the standard `float_to_uint` map over ±12.5 rad / ±30 rad·s⁻¹ /
@@ -433,14 +513,18 @@ The real wire formats were decoded from `source_files/` and are now implemented
 
 ## Current limitations
 
-- **Haptic**: runs in resultant-only mode; the distributed-force payload
-  (register `0x0016` bit1) and strict per-module slicing by the connection
-  bitmap (`0x0010`–`0x0013`) are not decoded — modules are treated as a flat
-  array of 6-byte resultant-force records.
-- **IMU**: assumes the unit already outputs angle/quaternion. The one-time
-  configuration (unlock `0xFF 0xAA 0x69 0x88 0xB5`, set `RSW` reg `0x02`, save)
-  is documented as a `TODO` but not sent automatically. Accel/gyro/mag frames
-  are parsed-and-ignored (only orientation is propagated).
+- **Haptic**: assumes the two CP-M3025 are in the integration board's **无名指**
+  and **小拇指** connectors as proximal modules (slots 12 and 16). Plugged into a
+  different finger connector, the board reports them at different slots and the
+  start-up discovery log says so. Only request/response polling is implemented;
+  the board's auto-push mode (`0x0017`) is disabled at boot and would give a
+  higher frame rate. The 77 values are displayed row-major; confirm physical
+  rotation/mirroring by pressing one corner before using the map for control.
+- **IMU**: startup checks only 9600 and 115200, using a read-only register query
+  to identify/wake the unit. A unit found at 9600 is moved to 115200 for the
+  powered session (not saved), then ACC/GYRO/ANGLE output at 100 Hz is applied
+  without saving. A stopped stream is woken once and then re-detected at those
+  same two rates. Yaw is intentionally not exposed.
 - **Motor**: uses factory default IDs (ESC_ID `0x001`, MST_ID `0x000`) and the
   4310's default value ranges — confirm/adjust against your motor's registers.
   A fixed impedance gain (Kp=5, Kd=1) holds position; no trajectory planning.
@@ -452,8 +536,8 @@ Remaining gaps are marked with `TODO:` comments in the source.
 
 ## Next implementation steps
 
-1. Haptic: read the connection bitmaps + point-count registers at init and slice
-   the payload per-module; optionally add distributed-force decoding.
+1. Haptic: verify address 1/2 and point ordering on hardware, then lock the
+   physical rotation/mirroring constants for the two mounted fingers.
 2. IMU: send the WitMotion config sequence at startup so the unit emits the
    desired packets/rate regardless of prior state.
 3. Motor: confirm ESC_ID/MST_ID and PMAX/VMAX/TMAX, then add closed-loop grip

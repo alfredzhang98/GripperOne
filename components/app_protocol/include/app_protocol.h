@@ -31,7 +31,7 @@ extern "C" {
 #define QUEUE_LEN_HAPTIC        8
 #endif
 #ifndef QUEUE_LEN_IMU
-#define QUEUE_LEN_IMU           8
+#define QUEUE_LEN_IMU           32  /* 320 ms headroom at the 100 Hz IMU rate */
 #endif
 #ifndef QUEUE_LEN_MOTOR_STATUS
 #define QUEUE_LEN_MOTOR_STATUS  8
@@ -54,20 +54,40 @@ typedef enum {
 const char *app_state_name(app_state_t s);
 
 /* -------------------------------------------------------------------------
- * Haptic / pressure sample (PaXini "通信盒" auto-push frame, head 0xAA 0x56).
+ * Haptic sample: one direct-UART PaXini CP-M3025-Core module.
  *
- * The driver configures the box for resultant-force output (register 0x0016 =
- * 0x01), so each connected tactile module contributes one 3-axis resultant
- * force (Fx, Fy, Fz). module_count = payload_len / 6.
+ * The CP-M3025 has a 7 x 11 array (77 points). Each point is three bytes in
+ * application register space: signed Fx, signed Fy, unsigned Fz, all at
+ * 0.1 N/LSB. Keeping the point data raw preserves the whole spatial map while
+ * keeping one sensor sample compact enough for the queue and app_proto.
  * ------------------------------------------------------------------------- */
-#define HAPTIC_MAX_MODULES 28              /* 5 fingers x 4 + 8 palm pads */
+#define HAPTIC_SENSOR_COUNT 2
+#define HAPTIC_GRID_COLS    7
+#define HAPTIC_GRID_ROWS    11
+#define HAPTIC_POINT_COUNT  (HAPTIC_GRID_COLS * HAPTIC_GRID_ROWS)
+
+/* Result of the integration board's start-up discovery for one slot. It rides
+ * along in every sample so a host can tell "no force" from "nothing plugged
+ * into that finger's connector", which otherwise look identical: the board
+ * happily answers reads for an empty slot and returns zeros. */
+typedef enum {
+    HAPTIC_SLOT_OK         = 0, /* present, reports HAPTIC_POINT_COUNT points */
+    HAPTIC_SLOT_EMPTY      = 1, /* absent from the board's module map         */
+    HAPTIC_SLOT_WRONG_SIZE = 2, /* present but not a 7x11 module              */
+    HAPTIC_SLOT_UNKNOWN    = 3, /* discovery never completed                  */
+} haptic_slot_status_t;
+
 typedef struct {
-    uint32_t seq;                          /* monotonically increasing */
-    uint8_t  error_code;                   /* total-error byte (reg 0x0023): 0 = OK */
-    uint16_t module_count;                 /* valid entries in force[] */
-    struct {
-        float fx, fy, fz;                  /* resultant force per module, Newtons */
-    } force[HAPTIC_MAX_MODULES];
+    uint32_t seq;             /* per-sensor monotonically increasing sequence */
+    uint32_t timestamp_ms;    /* ESP receive time                              */
+    uint8_t  sensor_index;    /* 0 = ring finger, 1 = little finger            */
+    uint8_t  device_addr;     /* integration-board module slot (12=ring 16=little) */
+    uint8_t  status;          /* haptic_slot_status_t for this slot              */
+    uint8_t  point_count;     /* 77 for CP-M3025                                */
+    float    resultant[3];    /* Fx, Fy, Fz in N from registers 1008..1010      */
+    int8_t   fx[HAPTIC_POINT_COUNT]; /* raw signed value, multiply by 0.1 N */
+    int8_t   fy[HAPTIC_POINT_COUNT]; /* raw signed value, multiply by 0.1 N */
+    uint8_t  fz[HAPTIC_POINT_COUNT]; /* raw unsigned value, multiply by 0.1 N */
 } haptic_sample_t;
 
 /* -------------------------------------------------------------------------
@@ -77,10 +97,11 @@ typedef struct {
  * ------------------------------------------------------------------------- */
 typedef struct {
     uint32_t seq;
+    uint32_t timestamp_ms; /* ESP receive time; wraps naturally after ~49 d */
     float roll;         /* deg  (gravity-referenced tilt) */
     float pitch;        /* deg */
     float accel[3];     /* g     (ax, ay, az) — raw, includes gravity */
-    float lin_accel[3]; /* g     gravity removed via roll/pitch (~0 at rest) */
+    float lin_accel[3]; /* g     2.5 s high-pass in sensor axes (~0 at rest) */
     float gyro[3];      /* deg/s (gx, gy, gz) — rotational shake */
     float temp;         /* degC  */
 } imu_sample_t;
@@ -116,7 +137,10 @@ typedef enum {
     OP_GET_VERSION     = 0x02,  /* -> version response                        */
     OP_GET_STATE       = 0x03,  /* -> supervisor state                       */
     OP_SELF_CALIBRATE  = 0x04,  /* run IMU+haptic+motor calibration sequence  */
-    OP_SET_TELEM_RATE  = 0x05,  /* u0 = telemetry Hz                          */
+    /* 0x05 was a separate telemetry rate. Retired: telemetry now forwards
+     * every sample the sensor produces, so the sensor's own output rate is the
+     * only rate there is - see OP_IMU_SET_RATE. Two independent clocks meant
+     * the device silently discarded most of what it measured. */
     OP_SAFE_STOP       = 0x06,  /* force SAFE_STOP (always allowed)           */
     OP_SESSION_UNLOCK  = 0x07,  /* u0 = key; required before motor actuation  */
     OP_SESSION_LOCK    = 0x08,
@@ -135,16 +159,31 @@ typedef enum {
     OP_IMU_STREAM_DIS   = 0x21,
     OP_IMU_GET          = 0x22, /* -> one IMU telemetry frame                */
     OP_IMU_CALIBRATE    = 0x23, /* accelerometer calibration (still & level)  */
-    OP_IMU_SET_ZERO     = 0x24, /* yaw/Z zero (6-axis only)                   */
     OP_IMU_SET_REF      = 0x25, /* set current roll/pitch as reference (zero) */
-    OP_IMU_SET_AXIS     = 0x26, /* u0: 0 = 9-axis, 1 = 6-axis                 */
+    OP_IMU_POWON_SET    = 0x27, /* u0: 0 = off, 1 = on. Power-on auto data     *
+                                 * output (WIT POWONSEND 0x2D), persisted in   *
+                                 * the unit.                                   */
+    OP_IMU_SET_RATE     = 0x28, /* u0 = output Hz (10/20/50/100/200). Sets the *
+                                 * sensor itself; telemetry follows 1:1.       *
+                                 * Session-only - a reboot restores the built  *
+                                 * -in rate.                                   */
+    OP_IMU_ACQ_EN       = 0x29, /* resume IMU -> ESP32 frames (session only)   */
+    OP_IMU_ACQ_DIS      = 0x2A, /* stop IMU -> ESP32 frames (session only)     */
+    /* 0x24 and 0x26 are retired, not free. 0x24 was a yaw zero: yaw is never
+     * decoded here (it needs the magnetometer, unreliable beside the motors),
+     * so the command could only ever ACK a no-op. 0x26 switched the fusion
+     * algorithm at runtime; the algorithm is pinned at start-up instead, and
+     * changing it mid-run would swap the meaning of every angle already sent.
+     * Leave the numbers unused so a future opcode cannot inherit old meaning. */
 
     /* --- haptic (0x3-) --- */
     OP_HAPTIC_STREAM_EN = 0x30,
     OP_HAPTIC_STREAM_DIS= 0x31,
-    OP_HAPTIC_GET       = 0x32, /* -> one haptic telemetry frame             */
-    OP_HAPTIC_SET_CONTENT=0x33, /* u0 = content bits (bit0 resultant,1 dist) */
-    OP_HAPTIC_CALIBRATE = 0x34, /* zero/tare the tactile modules             */
+    OP_HAPTIC_GET       = 0x32, /* -> latest frame for each tactile module   */
+    /* 0x33 retired: direct CP-M3025 reads always include resultant + array. */
+    OP_HAPTIC_CALIBRATE = 0x34, /* zero/tare both tactile modules             */
+    OP_HAPTIC_ACQ_EN    = 0x35, /* resume CP-M3025 polling                    */
+    OP_HAPTIC_ACQ_DIS   = 0x36, /* stop polling; USB stream switch unchanged */
 
     /* --- gripper high-level app (0x4-) --- (motion; require unlock) */
     OP_GRIP_CALIBRATE  = 0x40,  /* auto-find closed+open stops, save to flash */
