@@ -31,7 +31,7 @@ static const char *TAG = "supervisor";
 #define FW_VERSION_MAJOR 0
 #define FW_VERSION_MINOR 1
 
-#define LOOP_PERIOD_MS      20
+#define LOOP_PERIOD_MS      10
 #define IMU_TIMEOUT_MS      1500  /* allows one in-driver wake/reconfigure attempt */
 #define IMU_DATA_FRESH_MS    500  /* stream/get require a recently received sample */
 #define HAPTIC_DATA_FRESH_MS 500
@@ -326,9 +326,10 @@ static void supervisor_task(void *arg)
         bool got_imu = false;
 
         /* Sole consumer of imu_q. Accumulate every 100 Hz sample received during
-         * this 20 ms supervisor period and emit them together. Normal traffic is
-         * therefore 50 USB packets/s with two samples/packet, while the host
-         * still reconstructs the complete 100 Hz stream. */
+         * this supervisor period and emit them together. At the 10 ms period
+         * that is usually one sample per packet; the batch survives because the
+         * host reconstructs the stream from the count either way, and a slow
+         * period or a burst of queued samples still coalesces. */
         imu_sample_t imu_batch[APP_PROTO_IMU_BATCH_MAX];
         size_t imu_batch_count = 0;
         while (xQueueReceive(s_bus->imu_q, &s_last_imu, 0) == pdTRUE) {
@@ -400,8 +401,8 @@ static void supervisor_task(void *arg)
             }
         }
 
-        /* Fixed-period scheduling keeps the USB report cadence at 50 Hz rather
-         * than adding processing time to every 20 ms delay. */
+        /* Fixed-period scheduling keeps the cadence at 1/LOOP_PERIOD_MS rather
+         * than adding this pass's processing time to every delay. */
         xTaskDelayUntil(&next_wake, pdMS_TO_TICKS(LOOP_PERIOD_MS));
     }
 }

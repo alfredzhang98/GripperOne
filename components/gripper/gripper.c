@@ -14,7 +14,11 @@ static const char *TAG = "gripper";
  * Tunables. Calibrate these once the real jaw kinematics and motor direction
  * are known. Currents are per-unit (I/Imax) as required by force-position mode.
  * ========================================================================= */
-#define GRIPPER_TICK_MS       20      /* supervisor calls gripper_tick() at ~50 Hz */
+#define GRIPPER_TICK_MS       10      /* supervisor calls gripper_tick() at ~100 Hz.
+                                       * MUST equal LOOP_PERIOD_MS in
+                                       * app_supervisor.c: every timeout below is
+                                       * counted by adding this per tick, so a
+                                       * mismatch silently scales them all. */
 #define GRIPPER_CLOSE_DIR    (+1.0f)  /* sign of position change that CLOSES the jaw. TODO confirm */
 
 #define TWO_PI                6.283185307f
