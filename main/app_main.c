@@ -7,7 +7,7 @@
  *   IMU   --UART--> imu_uart_task    --(imu_sample_t)----> imu_q ---------\
  *   pads  --UART--> haptic_uart_task --(haptic_sample_t)-> haptic_q ------+
  *   motor --TWAI--> motor_twai RX    --(motor_status_t)--> motor_status_q +--> supervisor_task
- *   host  --USB---> transport_uart   --(app_cmd_t)-------> ctrl_q --------/     |
+ *   host  --USB/BLE/Wi-Fi-> transports --(app_cmd_t)----> ctrl_q --------/     |
  *                        ^                                       gripper_tick() |
  *                        \--- ACK / telemetry (app_proto) ---   force-position  v
  *                                                               setpoint -> motor_twai_task
@@ -15,7 +15,8 @@
  * supervisor_task is the sole consumer of every queue — a queue hands each
  * message to exactly one reader — and the sole place a decoded command becomes
  * a driver call. This file only owns configuration and start-up order.
- * wireless_ble / wireless_wifi are not started (USB transport only).
+ * USB, BLE and Wi-Fi (TCP) run side by side with the same protocol; replies
+ * go back to the transport a command came from (see app_proto sinks).
  *
  * Nothing calls imu_uart_set_angle_ref() at boot. That is the roll/pitch zero
  * (WIT CALSW 0x08, persisted in the unit's own flash), and it matters here:
@@ -38,6 +39,9 @@
 #include "gripper.h"
 #include "app_supervisor.h"
 #include "transport_uart.h"
+#include "wireless_ble.h"
+#include "wireless_wifi.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG = "app_main";
 
@@ -113,7 +117,29 @@ void app_main(void)
      * host can send anything. ---- */
     ESP_ERROR_CHECK(transport_uart_start(&s_bus));
 
-    ESP_LOGI(TAG, "=== IMU %d Hz; tactile 2 x 7x11 @ %d Hz; motor TWAI %d kbps; app_proto on USB ===",
-             IMU_OUT_RATE_HZ, HAPTIC_POLL_HZ, MOTOR_TWAI_BITRATE_KBPS);
+    /* ---- Wireless transports. A failure here is logged, not fatal: USB
+     * control must keep working without them. ---- */
+#if APP_ENABLE_WIFI
+    const wireless_wifi_cfg_t wifi_cfg = {
+        .ap_ssid_prefix = WIFI_AP_SSID_PREFIX,
+        .ap_password    = WIFI_AP_PASSWORD,
+        .ap_channel     = WIFI_AP_CHANNEL,
+        .tcp_port       = WIFI_TCP_PORT,
+    };
+    if (wireless_wifi_start(&s_bus, &wifi_cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi did not start; USB and BLE still work");
+    }
+#endif
+#if APP_ENABLE_BLE
+    if (wireless_ble_start(&s_bus, BLE_DEVICE_NAME) != ESP_OK) {
+        ESP_LOGE(TAG, "BLE did not start; USB and Wi-Fi still work");
+    }
+#endif
+
+    ESP_LOGI(TAG, "=== IMU %d Hz; tactile 2 x 7x11 @ %d Hz; motor TWAI %d kbps; app_proto on USB%s%s; "
+                  "free heap %u bytes ===",
+             IMU_OUT_RATE_HZ, HAPTIC_POLL_HZ, MOTOR_TWAI_BITRATE_KBPS,
+             APP_ENABLE_BLE ? " + BLE" : "", APP_ENABLE_WIFI ? " + Wi-Fi" : "",
+             (unsigned)esp_get_free_heap_size());
     /* app_main returns; FreeRTOS tasks keep running. */
 }

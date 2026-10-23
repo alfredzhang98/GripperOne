@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Command-line bench tool for the gripper (motor + tactile) over app_proto.
+"""Command-line tool for the gripper (motor + tactile) over app_proto.
 
-The firmware log and the app_proto frames share the USB serial port; this tool
-prints the log lines and decodes the frames. Close idf.py monitor first (only
-one program can open the port).
+Three links, the same commands on each:
+    --port COM6                  USB serial (default). Also shows the firmware log.
+    --tcp 192.168.4.1[:5000]     Wi-Fi: join the gripper's access point "GripperPlus-XXXX"
+                                 (password gripper123), or use the address it got on a stored network.
+    --ble [--ble-name NAME|MAC]  Bluetooth LE, default name GripperPlus (needs: pip install bleak).
+The firmware log exists only on USB. Close idf.py monitor before using USB.
 
     python host/3_gripper_cli.py log                  # firmware log only
     python host/3_gripper_cli.py watch                # motor position + pad forces, motor stays off
@@ -16,16 +19,21 @@ one program can open the port).
     python host/3_gripper_cli.py stop | disable | clear
     --speed: rad/s at the output, 0.05 .. 15; not given = 2
     python host/3_gripper_cli.py save-motor-config    # store mode 4 + TIMEOUT in the motor (0x17)
+    python host/3_gripper_cli.py wifi-info            # access point, stored network, addresses
+    python host/3_gripper_cli.py wifi-set SSID PASS   # store a network (over USB), the gripper joins it
+    python host/3_gripper_cli.py wifi-clear           # forget it (the access point stays)
+    python host/3_gripper_cli.py ble-scan             # list nearby grippers over Bluetooth
 
-Every command takes --port (default COM6). Ctrl+C while a command runs sends
-MOTOR_DISABLE (0x11): the motor goes limp at once.
+Ctrl+C while a command runs sends MOTOR_DISABLE (0x11): the motor goes limp at once.
 """
 
 import argparse
 import os
 import re
+import socket
 import struct
 import sys
+import threading
 import time
 
 try:
@@ -45,8 +53,13 @@ OP = {
     "MOTOR_DISABLE": 0x11, "MOTOR_CLEAR_ERR": 0x15, "MOTOR_GET_STATUS": 0x16, "MOTOR_SAVE_CONFIG": 0x17,
     "HAPTIC_GET": 0x32,
     "GRIP_CALIBRATE": 0x40, "GRIP_HOME": 0x41, "GRIP_SET_CLOSE": 0x42, "GRIP_GRIP": 0x43,
-    "GRIP_RELEASE": 0x44, "GRIP_STOP": 0x46, "GRIP_GET_CALIB": 0x47,
+    "GRIP_STOP": 0x46, "GRIP_GET_CALIB": 0x47,
+    "SESSION_LOCK": 0x08, "WIFI_SET_STA": 0x09, "WIFI_GET_INFO": 0x0A,
 }
+TCP_PORT = 5000
+BLE_NAME = "GripperPlus"
+BLE_CTRL_UUID = "67700002-0000-0000-0000-676700001111"    # write: commands in
+BLE_TELEM_UUID = "67700003-0000-0000-0000-676700001111"   # notify: replies out
 OP_NAME = {v: k for k, v in OP.items()}
 STATUS = {0: "OK", 1: "ERR_CRC", 2: "ERR_VERSION", 3: "ERR_OPCODE", 4: "ERR_LOCKED", 5: "ERR_STATE", 6: "ERR_ARG"}
 # gripper_state_t / gripper_fault_t, mirrored from components/gripper/include/gripper.h
@@ -78,21 +91,129 @@ def build(frame_type: int, seq: int, payload: bytes) -> bytes:
     return SOF + body + struct.pack("<H", crc16(body))
 
 
-class Link:
-    """Serial port that splits the byte stream into log lines and frames."""
+class SerialIO:
+    """USB serial. Carries the firmware log as well as the frames."""
 
-    def __init__(self, port: str, quiet_log: bool = False):
+    def __init__(self, port: str):
         # DTR and RTS stay low from open to close: on Windows, opening or
         # closing with them high pulses the board's auto-reset circuit, and a
         # restart with the motor holding makes the drive report "CAN commands
-        # lost" (fault 0xD), which then blocks every motion until `clear`.
-        self.ser = serial.Serial()
-        self.ser.port = port
-        self.ser.baudrate = 115200
-        self.ser.timeout = 0.02
-        self.ser.dtr = False
-        self.ser.rts = False
-        self.ser.open()
+        # lost" (fault 0xD).
+        self.s = serial.Serial()
+        self.s.port = port
+        self.s.baudrate = 115200
+        self.s.timeout = 0.02
+        self.s.dtr = False
+        self.s.rts = False
+        self.s.open()
+
+    def read(self, n: int) -> bytes:
+        return self.s.read(n)
+
+    def write(self, data: bytes):
+        self.s.write(data)
+
+    def close(self):
+        self.s.close()
+
+
+class TcpIO:
+    """Wi-Fi: one TCP connection to the gripper (a new one replaces the old)."""
+
+    def __init__(self, target: str):
+        host, _, port = target.partition(":")
+        self.sock = socket.create_connection((host, int(port) if port else TCP_PORT), timeout=5)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.sock.settimeout(0.02)
+
+    def read(self, n: int) -> bytes:
+        try:
+            data = self.sock.recv(n)
+        except socket.timeout:
+            return b""
+        if not data:
+            raise ConnectionError("the gripper closed the TCP connection")
+        return data
+
+    def write(self, data: bytes):
+        self.sock.sendall(data)
+
+    def close(self):
+        self.sock.close()
+
+
+class BleIO:
+    """Bluetooth LE via bleak, on its own asyncio thread. Notifications are a
+    byte stream (the gripper splits large frames by MTU)."""
+
+    def __init__(self, target: str, scan_s: float = 8.0):
+        try:
+            import asyncio
+            from bleak import BleakClient, BleakScanner
+        except ImportError:
+            sys.exit("bleak missing: pip install bleak")
+        self.asyncio = asyncio
+        self.buf = bytearray()
+        self.lock = threading.Lock()
+        self.loop = asyncio.new_event_loop()
+        threading.Thread(target=self.loop.run_forever, daemon=True).start()
+
+        async def connect():
+            if re.fullmatch(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", target):
+                dev = target
+            else:
+                dev = await BleakScanner.find_device_by_name(target, timeout=scan_s)
+                if dev is None:
+                    raise ConnectionError("no Bluetooth device named %r found" % target)
+            client = BleakClient(dev)
+            await client.connect()
+            await client.start_notify(BLE_TELEM_UUID, self._on_notify)
+            return client
+
+        self.client = self._run(connect(), scan_s + 20)
+
+    def _run(self, coro, timeout: float):
+        return self.asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
+
+    def _on_notify(self, _handle, data: bytearray):
+        with self.lock:
+            self.buf += data
+
+    def read(self, n: int) -> bytes:
+        with self.lock:
+            out = bytes(self.buf[:n])
+            del self.buf[:n]
+        if not out:
+            if not self.client.is_connected:
+                raise ConnectionError("the gripper closed the Bluetooth connection")
+            time.sleep(0.01)
+        return out
+
+    def write(self, data: bytes):
+        chunk = max(20, getattr(self.client, "mtu_size", 23) - 3)
+        for i in range(0, len(data), chunk):
+            self._run(self.client.write_gatt_char(BLE_CTRL_UUID, data[i:i + chunk], response=False), 5)
+
+    def close(self):
+        try:
+            self._run(self.client.disconnect(), 5)
+        finally:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+
+
+def open_io(args):
+    if args.tcp:
+        return TcpIO(args.tcp)
+    if args.ble:
+        return BleIO(args.ble_name)
+    return SerialIO(args.port)
+
+
+class Link:
+    """A byte link (USB, TCP or BLE) split into log lines and frames."""
+
+    def __init__(self, io, quiet_log: bool = False):
+        self.ser = io
         self.buf = bytearray()
         self.text = bytearray()  # log text cut off by a frame, completed later
         self.seq = 0
@@ -100,6 +221,7 @@ class Link:
         self.motor = None        # latest motor status dict
         self.pads = {}           # sensor index -> fz resultant (N)
         self.calib = None
+        self.wifi = None
         self.acks = {}           # seq -> (op, status)
 
     def send(self, op: int, args: bytes = b"") -> int:
@@ -180,6 +302,15 @@ class Link:
             idx = pl[1]
             fz = struct.unpack_from("<3f", pl, 13)[2]
             self.pads[idx] = fz
+        elif op == OP["WIFI_GET_INFO"] and len(pl) >= 16:
+            ap_ip, sta_ip, cl_ip = struct.unpack_from("<4s4s4s", pl, 4)
+            k = 16
+            a = pl[k]; ap_ssid = pl[k + 1:k + 1 + a].decode("utf-8", "replace"); k += 1 + a
+            b = pl[k] if k < len(pl) else 0
+            sta_ssid = pl[k + 1:k + 1 + b].decode("utf-8", "replace")
+            self.wifi = {"started": pl[1], "sta_state": pl[2], "client": pl[3],
+                         "ap_ip": socket.inet_ntoa(ap_ip), "sta_ip": socket.inet_ntoa(sta_ip),
+                         "client_ip": socket.inet_ntoa(cl_ip), "ap_ssid": ap_ssid, "sta_ssid": sta_ssid}
         elif op == OP["GRIP_GET_CALIB"] and len(pl) >= 44:
             v = struct.unpack_from("<10f", pl, 4)
             self.calib = {"valid": pl[1], "state": pl[2], "fault": pl[3], "pos_closed": v[0], "pos_open": v[1],
@@ -200,6 +331,14 @@ class Link:
         st = self.command("SESSION_UNLOCK", struct.pack("<I", SESSION_KEY))
         print("unlock:", st)
         return st == "OK"
+
+    def get_wifi(self, timeout: float = 1.0):
+        self.wifi = None
+        self.send(OP["WIFI_GET_INFO"])
+        end = time.time() + timeout
+        while time.time() < end and self.wifi is None:
+            self.poll(0.02)
+        return self.wifi
 
     def get_calib(self, timeout: float = 1.0):
         self.calib = None
@@ -387,6 +526,22 @@ def cmd_cycle(link: Link, args) -> int:
     return 0
 
 
+def cmd_ble_scan() -> int:
+    try:
+        import asyncio
+        from bleak import BleakScanner
+    except ImportError:
+        print("bleak missing: pip install bleak")
+        return 1
+    devs = asyncio.run(BleakScanner.discover(timeout=6.0))
+    found = [d for d in devs if (d.name or "").startswith(BLE_NAME)]
+    for d in found:
+        print("%s  %s" % (d.address, d.name))
+    if not found:
+        print("no %s found (powered? already connected to another computer?)" % BLE_NAME)
+    return 0
+
+
 def closing_percent(text: str) -> float:
     v = float(text)
     if not 5.0 <= v <= 95.0:
@@ -396,7 +551,11 @@ def closing_percent(text: str) -> float:
 
 def main():
     ap = argparse.ArgumentParser(description="Gripper bench CLI (app_proto over USB serial)")
-    ap.add_argument("--port", default="COM6")
+    ap.add_argument("--port", default="COM6", help="USB serial port (default COM6)")
+    ap.add_argument("--tcp", metavar="HOST[:PORT]", help="Wi-Fi: e.g. 192.168.4.1 (port %d)" % TCP_PORT)
+    ap.add_argument("--ble", action="store_true", help="Bluetooth LE instead of USB")
+    ap.add_argument("--ble-name", default=BLE_NAME, metavar="NAME|MAC",
+                    help="Bluetooth device name or MAC address (default %s)" % BLE_NAME)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("log", help="print the firmware log")
     w = sub.add_parser("watch", help="motor position and pad forces, motor stays off")
@@ -424,9 +583,25 @@ def main():
     sub.add_parser("disable", help="motor off now (0x11)")
     sub.add_parser("clear", help="clear a latched fault (0x15)")
     sub.add_parser("save-motor-config", help="store mode 4 + TIMEOUT in the motor's flash (0x17)")
+    sub.add_parser("wifi-info", help="Wi-Fi access point, stored network and addresses (0x0A)")
+    ws = sub.add_parser("wifi-set", help="store a Wi-Fi network; the gripper joins it (0x09)")
+    ws.add_argument("ssid")
+    ws.add_argument("password", nargs="?", default="")
+    sub.add_parser("wifi-clear", help="forget the stored Wi-Fi network (0x09)")
+    sub.add_parser("ble-scan", help="list nearby grippers over Bluetooth LE")
     args = ap.parse_args()
 
-    link = Link(args.port)
+    if args.cmd == "ble-scan":
+        return cmd_ble_scan()
+    try:
+        io = open_io(args)
+    except (OSError, ConnectionError) as e:
+        print("cannot connect: %s" % e)
+        return 1
+    link = Link(io)
+    if (args.tcp or args.ble) and args.cmd == "log":
+        print("the firmware log is only on USB (--port)")
+        return 1
     try:
         if args.cmd == "log":
             print("firmware log; Ctrl+C ends")
@@ -467,6 +642,29 @@ def main():
             link.poll(0.5)
         elif args.cmd == "cycle":
             return cmd_cycle(link, args)
+        elif args.cmd == "wifi-info":
+            w = link.get_wifi()
+            if not w:
+                print("no reply")
+            elif not w["started"]:
+                print("Wi-Fi is not running on this gripper")
+            else:
+                sta = {0: "none stored", 1: "connecting", 2: "connected"}.get(w["sta_state"], "?")
+                print("access point : %s, address %s, TCP port %d" % (w["ap_ssid"], w["ap_ip"], TCP_PORT))
+                print("network      : %s%s" % (("\"%s\" " % w["sta_ssid"]) if w["sta_ssid"] else "", sta)
+                      + (", address %s" % w["sta_ip"] if w["sta_state"] == 2 else ""))
+                print("TCP client   : %s" % (w["client_ip"] if w["client"] else "none"))
+        elif args.cmd in ("wifi-set", "wifi-clear"):
+            ssid = args.ssid.encode() if args.cmd == "wifi-set" else b""
+            pw = args.password.encode() if args.cmd == "wifi-set" else b""
+            if len(ssid) > 32 or len(pw) > 64 or (pw and len(pw) < 8):
+                print("SSID at most 32 bytes; password empty or 8..64 bytes")
+                return 1
+            if link.unlock():
+                st = link.command("WIFI_SET_STA", bytes((len(ssid),)) + ssid + bytes((len(pw),)) + pw)
+                print("WIFI_SET_STA:", st)
+                if st == "OK" and ssid:
+                    print("joining... run wifi-info in a few seconds for the address")
         elif args.cmd == "stop":
             print("GRIP_STOP:", link.command("GRIP_STOP"))
         elif args.cmd == "disable":
@@ -484,6 +682,9 @@ def main():
                 print("MOTOR_SAVE_CONFIG:", link.command("MOTOR_SAVE_CONFIG", timeout=3.0))
                 link.poll(0.5)
         return 0
+    except ConnectionError as e:
+        print("\nconnection lost: %s" % e)
+        return 1
     except KeyboardInterrupt:
         if args.cmd not in ("log", "watch", "calib"):
             print("\nCtrl+C: MOTOR_DISABLE ->", link.command("MOTOR_DISABLE"))

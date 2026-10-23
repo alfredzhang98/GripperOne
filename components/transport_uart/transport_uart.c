@@ -9,7 +9,6 @@
 
 static const char *TAG = "transport_uart";
 
-#define TRANSPORT_ID_UART   2   /* stamped into decoded commands (BLE=0, Wi-Fi=1) */
 #define USJ_RX_BUF          1024
 #define USJ_TX_BUF          1024
 #define RX_CHUNK            256
@@ -45,7 +44,7 @@ static void uart_rx_task(void *arg)
     for (;;) {
         int n = usb_serial_jtag_read_bytes(buf, RX_CHUNK, pdMS_TO_TICKS(20));
         if (n > 0) {
-            app_proto_feed(&s_parser, TRANSPORT_ID_UART, buf, (size_t)n, uart_cmd_cb, NULL);
+            app_proto_feed(&s_parser, APP_TR_USB, buf, (size_t)n, uart_cmd_cb, NULL);
         }
     }
 }
@@ -70,7 +69,7 @@ int transport_uart_start(const app_bus_t *bus)
         return err;
     }
 
-    app_proto_set_sink(uart_sink, NULL);
+    app_proto_set_sink(APP_TR_USB, uart_sink, NULL);
 
     if (xTaskCreate(uart_rx_task, "usj_rx", 4096, NULL, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create uart_rx_task");

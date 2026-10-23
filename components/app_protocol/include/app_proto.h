@@ -87,15 +87,19 @@ typedef enum {
 /* ---- CRC ---------------------------------------------------------------- */
 uint16_t app_proto_crc16(const uint8_t *data, size_t len);
 
-/* ---- Sink: where responses/telemetry go (set by the active transport) --- */
+/* ---- Sinks: one output per transport (APP_TR_*) ------------------------- */
 typedef void (*app_proto_sink_fn)(const uint8_t *frame, size_t len, void *ctx);
 
-/** Register the current output transport (BLE notify / Wi-Fi send). Passing
- *  NULL clears it (e.g. on disconnect). */
-void app_proto_set_sink(app_proto_sink_fn fn, void *ctx);
+/** Register the output of @p transport (USB write / BLE notify / TCP send).
+ *  NULL clears it (peer gone). A sink is called from the supervisor task and
+ *  must not block. */
+void app_proto_set_sink(uint8_t transport, app_proto_sink_fn fn, void *ctx);
 
-/** Send a pre-built frame through the current sink (no-op if none). */
-void app_proto_emit(const uint8_t *frame, size_t len);
+/** Send a pre-built frame to one transport (a reply). No-op if it has no sink. */
+void app_proto_emit_to(uint8_t transport, const uint8_t *frame, size_t len);
+
+/** Send a pre-built frame to every transport in @p mask (APP_TR_BIT) - telemetry. */
+void app_proto_emit_mask(uint8_t mask, const uint8_t *frame, size_t len);
 
 /* ---- Streaming parser --------------------------------------------------- */
 typedef struct {

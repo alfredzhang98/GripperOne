@@ -2,7 +2,7 @@
 
 这是一个基于开源夹爪工程进一步改造的项目，结合了压力传感器和完整无线控制电路，目标是在原有夹爪基础上提升感知能力与控制便利性。
 
-夹爪电机控制的用法、实测结果、参数范围和电流计算见 [README_gripper.md](README_gripper.md)。
+连接和使用方法（USB、蓝牙、Wi-Fi；图形界面 `host/4_gripper_gui.py` 与命令行 `host/3_gripper_cli.py`）见 [docs/USER_MANUAL.md](docs/USER_MANUAL.md)；夹爪电机控制的实测结果、参数范围和电流计算见 [README_gripper.md](README_gripper.md)。
 
 ## 项目来源
 
@@ -61,8 +61,9 @@ gripper_plus/
    ├─ haptic_uart/           # UART1 921600, integration-board register polling
    ├─ imu_uart/              # UART0 boot 9600 -> run 115200, WIT 11-byte parser
    ├─ motor_twai/            # TWAI (CAN) DM-J4310, force-position mode only, start-up probe
-   ├─ transport_uart/        # app_proto over the native USB Serial/JTAG (default transport)
-   ├─ wireless_ble/          # NimBLE GATT control interface (not started by default)
+   ├─ transport_uart/        # app_proto over the native USB Serial/JTAG (always on)
+   ├─ wireless_ble/          # app_proto over BLE GATT (APP_ENABLE_BLE, on)
+   ├─ wireless_wifi/         # app_proto over TCP: own access point + optional station (APP_ENABLE_WIFI, off)
    ├─ wireless_wifi/         # optional Wi-Fi control path (skeleton)
    ├─ gripper/               # boot calibration (current + tactile) and tactile force grip
    └─ app_supervisor/        # INIT/IDLE/ACTIVE/ERROR/SAFE_STOP + gripper tick
@@ -187,8 +188,10 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 
 - **Pins** — edit `main/app_pins.h`.
 - **Baud rates / ports / task sizes** — edit `main/app_config.h`.
-- **Transport** — `APP_TRANSPORT` in `main/app_config.h` (default `TRANSPORT_UART`:
-  app_proto over the USB-C port; BLE and Wi-Fi are not started).
+- **Transports** — USB is always on; `APP_ENABLE_BLE` (1) and `APP_ENABLE_WIFI` (0) in
+  `main/app_config.h`. All run side by side; a reply goes to the link the command came from
+  and each link unlocks its own session. The partition table is the large single-app one
+  (1.5 MB app) because BLE + Wi-Fi need more than 1 MB.
 - Deeper options via `idf.py menuconfig`.
 
 ## FreeRTOS tasks
@@ -256,8 +259,10 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 | `0x04` | SELF_CALIBRATE | 无 | **是** | 等同 `GRIP_CALIBRATE`（夹爪标定，含触觉清零）。IMU 校准需静止水平，单独用 `0x23` |
 | `0x05` | SET_TELEM_RATE | u16 Hz | 否 | 设置遥测上报频率（默认 20Hz；受 50Hz 控制循环限制，超出按 50Hz 钳制） |
 | `0x06` | SAFE_STOP | 无 | 否（安全指令，永远允许） | 立即断电机并进入 SAFE_STOP |
-| `0x07` | SESSION_UNLOCK | u32 密钥 | 否 | 会话解锁；密钥 = `0x47521000`，正确才解锁 |
-| `0x08` | SESSION_LOCK | 无 | 否 | 重新上锁 |
+| `0x07` | SESSION_UNLOCK | u32 密钥 | 否 | 会话解锁；密钥 = `0x47521000`，正确才解锁。每条连接（USB、蓝牙、Wi-Fi）单独解锁，连接断开即失效 |
+| `0x08` | SESSION_LOCK | 无 | 否 | 重新上锁（只锁发出这条命令的连接） |
+| `0x09` | WIFI_SET_STA | u8 长度 + SSID + u8 长度 + 密码 | 是 | 保存要接入的 Wi-Fi 网络并立即连接；SSID 长度为 0 表示删除 |
+| `0x0A` | WIFI_GET_INFO | 无 | 否 | 回 RESPONSE：是否运行、网络状态、热点/网络/客户端地址、热点名、网络名 |
 
 ### 电机类 `0x1-`
 

@@ -1,5 +1,4 @@
-# IMU + haptic + motor/gripper build. wireless_ble and wireless_wifi stay out
-# of main's dependency graph and are never started (USB transport only).
+# IMU + haptic + motor/gripper build; control over USB, BLE and Wi-Fi.
 idf_component_register(
     SRCS "app_main.c"
     INCLUDE_DIRS "."
@@ -13,4 +12,7 @@ idf_component_register(
         gripper             # calibration + tactile force grip
         app_supervisor      # command dispatch + control loop
         transport_uart      # app_proto over USB-Serial/JTAG
+        wireless_ble        # app_proto over BLE GATT
+        wireless_wifi       # app_proto over TCP (access point + optional station)
+        esp_system          # free heap at start-up
 )

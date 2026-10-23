@@ -18,7 +18,7 @@
 
 ## 2. 命令行工具
 
-运行前先关闭 `idf.py monitor`，同一时间只能有一个程序打开串口。需要 pyserial（aiot 环境里已装）。
+运行前先关闭 `idf.py monitor`，同一时间只能有一个程序打开串口。需要 pyserial；用蓝牙还需要 bleak。在命令前加 `--ble` 即通过蓝牙控制，连接方法见 [docs/USER_MANUAL.md](docs/USER_MANUAL.md)。
 
 ```powershell
 python host/3_gripper_cli.py [--port COM6] <命令> [参数]

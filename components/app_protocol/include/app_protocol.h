@@ -145,6 +145,10 @@ typedef enum {
     OP_SAFE_STOP       = 0x06,  /* force SAFE_STOP (always allowed)           */
     OP_SESSION_UNLOCK  = 0x07,  /* u0 = key; required before motor actuation  */
     OP_SESSION_LOCK    = 0x08,
+    OP_WIFI_SET_STA    = 0x09,  /* data = u8 ssid_len, ssid, u8 pass_len, pass;
+                                 * stored in NVS, joins that network at once;
+                                 * ssid_len 0 clears it (unlock)              */
+    OP_WIFI_GET_INFO   = 0x0A,  /* -> Wi-Fi access point / station / client info */
 
     /* --- motor (0x1-) ---
      * 0x10 ENABLE, 0x12 SET_TARGET, 0x13 SET_GAINS and 0x14 SAVE_ZERO are
@@ -210,16 +214,32 @@ typedef enum {
     OP_GRIP_STOP       = 0x46,  /* hold current position (always allowed)     */
     OP_GRIP_GET_CALIB  = 0x47,  /* -> calibration + status response          */
     OP_GRIP_MOVE_DEG   = 0x48,  /* f0 = deg from the closed position, f1 = deg/s */
+
+    /* --- internal, never accepted from a link --- */
+    OP_INTERNAL_TRANSPORT_CLOSED = 0xF0,  /* a transport's peer left: relock it */
 } app_op_t;
+
+/* Transport ids, stamped into every decoded command. Replies go back to the
+ * transport a command came from; telemetry goes to the transports that
+ * enabled it. */
+#define APP_TR_BLE    0u
+#define APP_TR_WIFI   1u
+#define APP_TR_USB    2u
+#define APP_TR_COUNT  3u
+#define APP_TR_BIT(t) ((uint8_t)(1u << (t)))
+
+#define APP_CMD_DATA_MAX 98   /* OP_WIFI_SET_STA: 1 + 32 + 1 + 64 */
 
 /* A decoded, validated user command handed to the supervisor via ctrl_q. */
 typedef struct {
     uint8_t  seq;      /* echoed in the response                            */
     uint8_t  op;       /* app_op_t                                          */
-    uint8_t  transport;/* origin, for logging (0 = BLE, 1 = Wi-Fi)          */
+    uint8_t  transport;/* origin: APP_TR_BLE / APP_TR_WIFI / APP_TR_USB     */
     float    f0;       /* primary float arg (target / Kp / ...)             */
     float    f1;       /* secondary float arg (Kd)                          */
     uint32_t u0;       /* integer arg (session key / rate / content bits)   */
+    uint8_t  data_len; /* raw argument bytes (OP_WIFI_SET_STA)              */
+    uint8_t  data[APP_CMD_DATA_MAX];
 } app_cmd_t;
 
 /* -------------------------------------------------------------------------
@@ -240,6 +260,13 @@ typedef struct {
  *         freed and the pointers are left NULL.
  */
 int app_bus_init(app_bus_t *bus);
+
+/**
+ * @brief Tell the supervisor that a transport's peer has gone (BLE
+ *        disconnect, TCP close): its session is relocked, its telemetry
+ *        streams stop and a move it started stops. A grip keeps holding.
+ */
+void app_bus_post_transport_closed(const app_bus_t *bus, uint8_t transport);
 
 #ifdef __cplusplus
 }

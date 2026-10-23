@@ -40,25 +40,40 @@ static inline size_t put_f32(uint8_t *p, float f) { memcpy(p, &f, 4); return 4; 
  * re-entrantly on the BLE task). Guard the (fn,ctx) pair with a spinlock so a
  * reader can never latch a torn fn-from-one-transport / ctx-from-another. */
 static portMUX_TYPE       s_sink_mux = portMUX_INITIALIZER_UNLOCKED;
-static app_proto_sink_fn  s_sink = NULL;
-static void              *s_sink_ctx = NULL;
+static app_proto_sink_fn  s_sink[APP_TR_COUNT];      /* one per transport */
+static void              *s_sink_ctx[APP_TR_COUNT];
 
-void app_proto_set_sink(app_proto_sink_fn fn, void *ctx)
+void app_proto_set_sink(uint8_t transport, app_proto_sink_fn fn, void *ctx)
 {
+    if (transport >= APP_TR_COUNT) {
+        return;
+    }
     portENTER_CRITICAL(&s_sink_mux);
-    s_sink = fn;
-    s_sink_ctx = ctx;
+    s_sink[transport] = fn;
+    s_sink_ctx[transport] = ctx;
     portEXIT_CRITICAL(&s_sink_mux);
 }
 
-void app_proto_emit(const uint8_t *frame, size_t len)
+void app_proto_emit_to(uint8_t transport, const uint8_t *frame, size_t len)
 {
+    if (transport >= APP_TR_COUNT || !frame || !len) {
+        return;
+    }
     portENTER_CRITICAL(&s_sink_mux);
-    app_proto_sink_fn fn = s_sink;
-    void *ctx = s_sink_ctx;
+    app_proto_sink_fn fn = s_sink[transport];
+    void *ctx = s_sink_ctx[transport];
     portEXIT_CRITICAL(&s_sink_mux);
-    if (fn && frame && len) {
+    if (fn) {
         fn(frame, len, ctx);   /* call outside the critical section */
+    }
+}
+
+void app_proto_emit_mask(uint8_t mask, const uint8_t *frame, size_t len)
+{
+    for (uint8_t t = 0; t < APP_TR_COUNT; t++) {
+        if (mask & APP_TR_BIT(t)) {
+            app_proto_emit_to(t, frame, len);
+        }
     }
 }
 
@@ -192,6 +207,13 @@ static void decode_args(app_cmd_t *cmd, const uint8_t *pl, uint16_t plen)
     case OP_IMU_SET_RATE:
         if (plen >= 1 + 2) cmd->u0 = get_u16(&pl[1]);
         break;
+    case OP_WIFI_SET_STA: {
+        size_t n = plen - 1u;
+        if (n > sizeof(cmd->data)) n = sizeof(cmd->data);
+        memcpy(cmd->data, &pl[1], n);
+        cmd->data_len = (uint8_t)n;
+        break;
+    }
     default:
         break;   /* opcode-only commands */
     }
@@ -212,18 +234,20 @@ static uint16_t min_command_payload(uint8_t op)
     case OP_IMU_POWON_SET:
     case OP_IMU_SET_RATE:
         return 1 + 2;
+    case OP_WIFI_SET_STA:
+        return 1 + 2;   /* two length bytes at least */
     default:
         return 1;
     }
 }
 
 /* ---- streaming parser --------------------------------------------------- */
-static void emit_error(uint8_t seq, uint8_t op, uint8_t status)
+static void emit_error(uint8_t transport, uint8_t seq, uint8_t op, uint8_t status)
 {
     uint8_t out[APP_PROTO_HDR_LEN + 2 + 2];
     uint8_t pl[2] = { op, status };
     size_t n = app_proto_build(out, sizeof(out), APP_PROTO_T_ERROR, seq, pl, sizeof(pl));
-    if (n) app_proto_emit(out, n);
+    if (n) app_proto_emit_to(transport, out, n);
 }
 
 void app_proto_feed(app_proto_parser_t *p, uint8_t transport,
@@ -274,21 +298,21 @@ void app_proto_feed(app_proto_parser_t *p, uint8_t transport,
                  * consuming a possibly-bogus length (which could eat the next
                  * good frame). */
                 ESP_LOGW(TAG, "CRC fail (op=0x%02x), resync", op);
-                emit_error(seq, op, APP_PROTO_ERR_CRC);
+                emit_error(transport, seq, op, APP_PROTO_ERR_CRC);
                 memmove(p->buf, p->buf + 1, --p->len);
                 continue;
             }
             if (ver != APP_PROTO_VERSION) {
-                emit_error(seq, op, APP_PROTO_ERR_VERSION);
+                emit_error(transport, seq, op, APP_PROTO_ERR_VERSION);
             } else if (type != APP_PROTO_T_COMMAND) {
                 /* This parser is the device's command ingress. Do not let a
                  * syntactically valid RESPONSE/TELEMETRY/ACK frame execute as
                  * a command merely because its first payload byte is an op. */
-                emit_error(seq, op, APP_PROTO_ERR_ARG);
-            } else if (plen < 1) {
-                emit_error(seq, op, APP_PROTO_ERR_OPCODE);
+                emit_error(transport, seq, op, APP_PROTO_ERR_ARG);
+            } else if (plen < 1 || op >= OP_INTERNAL_TRANSPORT_CLOSED) {
+                emit_error(transport, seq, op, APP_PROTO_ERR_OPCODE);
             } else if (plen < min_command_payload(op)) {
-                emit_error(seq, op, APP_PROTO_ERR_ARG);
+                emit_error(transport, seq, op, APP_PROTO_ERR_ARG);
             } else {
                 app_cmd_t cmd = { .seq = seq, .op = op, .transport = transport };
                 decode_args(&cmd, &p->buf[APP_PROTO_HDR_LEN], plen);

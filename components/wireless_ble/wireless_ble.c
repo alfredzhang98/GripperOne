@@ -104,7 +104,7 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
         if (ble_hs_mbuf_to_flat(ctxt->om, buf, sizeof(buf), &len) != 0) {
             return BLE_ATT_ERR_UNLIKELY;
         }
-        app_proto_feed(&s_parser, 0 /* transport = BLE */, buf, len, ble_cmd_cb, NULL);
+        app_proto_feed(&s_parser, APP_TR_BLE, buf, len, ble_cmd_cb, NULL);
         return 0;
     }
     case BLE_GATT_ACCESS_OP_READ_CHR: {
@@ -155,7 +155,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
             s_parser.len = 0;                          /* fresh reassembly */
-            app_proto_set_sink(ble_sink, NULL);        /* route telemetry here */
+            app_proto_set_sink(APP_TR_BLE, ble_sink, NULL);   /* replies to this peer */
             ESP_LOGI(TAG, "connected");
         } else {
             ble_advertise();
@@ -164,7 +164,8 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "disconnected; reason=%d", event->disconnect.reason);
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-        app_proto_set_sink(NULL, NULL);
+        app_proto_set_sink(APP_TR_BLE, NULL, NULL);
+        app_bus_post_transport_closed(s_bus, APP_TR_BLE);   /* relock, stop its streams */
         ble_advertise();
         break;
     case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -222,6 +223,10 @@ int wireless_ble_start(const app_bus_t *bus, const char *device_name)
     if (device_name) {
         s_device_name = device_name;
     }
+
+    /* NimBLE logs every notification at INFO ("GATT procedure initiated:
+     * notify"): at five telemetry polls a second that buries the USB log */
+    esp_log_level_set("NimBLE", ESP_LOG_WARN);
 
     esp_err_t ret = nimble_port_init();
     if (ret != ESP_OK) {

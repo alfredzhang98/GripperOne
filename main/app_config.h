@@ -10,17 +10,22 @@
 #define APP_CONFIG_H
 
 /* =========================================================================
- * User-layer transport
- * All three (UART / BLE / Wi-Fi) speak the same app_proto protocol and expose
- * the same start(bus) + app_proto sink. Pick exactly one; the others are still
- * compiled but not started. Default: UART over the native USB-Serial/JTAG.
+ * User-layer transports
+ * USB (always on: it also carries the log), BLE and Wi-Fi run side by side
+ * and speak the same app_proto protocol. A reply goes back to the transport
+ * the command came from; each transport unlocks its own session.
  * ========================================================================= */
-#define TRANSPORT_UART 0
-#define TRANSPORT_BLE 1
-#define TRANSPORT_WIFI 2
-#ifndef APP_TRANSPORT
-#define APP_TRANSPORT TRANSPORT_UART
-#endif
+#define APP_ENABLE_BLE  1
+#define APP_ENABLE_WIFI 0   /* implemented; off for now (user's choice) */
+
+/* Wi-Fi: the gripper's own access point "<prefix>-XXXX" (XXXX from its MAC),
+ * address 192.168.4.1. A home/lab network can be stored over USB
+ * (OP_WIFI_SET_STA, CLI "wifi-set"); the same TCP port then also serves the
+ * address that network gives the gripper. */
+#define WIFI_AP_SSID_PREFIX "GripperPlus"
+#define WIFI_AP_PASSWORD    "gripper123"   /* WPA2, at least 8 characters */
+#define WIFI_AP_CHANNEL     6
+#define WIFI_TCP_PORT       5000
 
 /* =========================================================================
  * UART links
@@ -34,9 +39,9 @@
  * 921600 baud, so 80 Hz for both fits comfortably.
  *
  * Module indices are slots in the integration board's fixed 28-module order
- * (通信盒通信协议 section 4.6): thumb 0-3, index 4-7, middle 8-11, ring 12-15,
+ * (é€šä¿¡ç›’é€šä¿¡åè®® section 4.6): thumb 0-3, index 4-7, middle 8-11, ring 12-15,
  * little 16-19, palm 20-27, each finger as proximal/middle/fingertip/nail.
- * A CP-M3025 is the proximal ("近节") module, so ring = 12, little = 16. */
+ * A CP-M3025 is the proximal ("è¿‘èŠ‚") module, so ring = 12, little = 16. */
 #define HAPTIC_POLL_HZ 80
 #define HAPTIC_RING_MODULE 12
 #define HAPTIC_LITTLE_MODULE 16
@@ -132,7 +137,7 @@
 
 /* =========================================================================
  * Inter-task queue depths (number of messages) are owned by app_protocol.h
- * (QUEUE_LEN_*), because the queues are created there in app_bus_init() — a
+ * (QUEUE_LEN_*), because the queues are created there in app_bus_init() â€” a
  * component that does not include this file. Override them at the build level
  * (e.g. a compile definition) if you need a different depth.
  * ========================================================================= */

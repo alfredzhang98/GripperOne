@@ -40,3 +40,13 @@ int app_bus_init(app_bus_t *bus)
     ESP_LOGI(TAG, "message bus ready");
     return ESP_OK;
 }
+
+void app_bus_post_transport_closed(const app_bus_t *bus, uint8_t transport)
+{
+    if (!bus || !bus->ctrl_q) {
+        return;
+    }
+    app_cmd_t cmd = { .op = OP_INTERNAL_TRANSPORT_CLOSED, .transport = transport };
+    /* wait briefly: losing this message would leave the session unlocked */
+    xQueueSend(bus->ctrl_q, &cmd, pdMS_TO_TICKS(50));
+}

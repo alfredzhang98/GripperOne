@@ -32,6 +32,7 @@
 #include "haptic_uart.h"
 #include "motor_twai.h"
 #include "gripper.h"
+#include "wireless_wifi.h"
 
 static const char *TAG = "supervisor";
 
@@ -64,7 +65,8 @@ static volatile app_state_t s_state = APP_STATE_INIT;
 static float                s_overforce_n = OVERFORCE_N_DEFAULT;
 
 /* motion permission */
-static bool s_unlocked    = false;
+static uint8_t s_unlock_mask = 0;     /* APP_TR_BIT per unlocked transport */
+static uint8_t s_reply_tr = APP_TR_USB;  /* transport of the command being handled */
 static bool s_safe_stop   = false;   /* latched until MOTOR_CLEAR_ERR          */
 static bool s_motor_fault = false;   /* drive reported a fault; same latch     */
 #define MOTOR_ERR_COMM_LOST   0xD    /* DM drive: commands stopped while enabled */
@@ -76,8 +78,8 @@ static TickType_t s_boot_clear_until = 0;
 static uint8_t    s_over_n[HAPTIC_SENSOR_COUNT];   /* see OVERFORCE_SAMPLES */
 
 /* streaming state (the "user layer" runtime) */
-static bool s_stream_imu = false;
-static bool s_stream_haptic = false;
+static uint8_t s_stream_imu = 0;      /* APP_TR_BIT per transport that enabled it */
+static uint8_t s_stream_haptic = 0;
 static bool s_powon_output = false;
 static TickType_t s_last_imu_tick = 0;
 static TickType_t s_last_haptic_tick[HAPTIC_SENSOR_COUNT];
@@ -207,35 +209,35 @@ static void reply_ack(uint8_t seq, uint8_t op, uint8_t status)
 {
     uint8_t f[APP_PROTO_HDR_LEN + 2 + 2];
     size_t n = app_proto_ack(f, sizeof(f), seq, op, status);
-    if (n) app_proto_emit(f, n);
+    if (n) app_proto_emit_to(s_reply_tr, f, n);
 }
 
 static void emit_imu(void)
 {
     uint8_t f[APP_PROTO_MAX_FRAME];
     size_t n = app_proto_tele_imu(f, sizeof(f), &s_last_imu);
-    if (n) app_proto_emit(f, n);
+    if (n) app_proto_emit_to(s_reply_tr, f, n);
 }
 
 static void emit_imu_batch(const imu_sample_t *samples, size_t count)
 {
     uint8_t f[APP_PROTO_MAX_FRAME];
     size_t n = app_proto_tele_imu_batch(f, sizeof(f), samples, count);
-    if (n) app_proto_emit(f, n);
+    if (n) app_proto_emit_mask(s_stream_imu, f, n);
 }
 
-static void emit_haptic(uint8_t sensor_index)
+static void emit_haptic(uint8_t sensor_index, uint8_t mask)
 {
     uint8_t f[APP_PROTO_MAX_FRAME];
     size_t n = app_proto_tele_haptic(f, sizeof(f), &s_last_haptic[sensor_index]);
-    if (n) app_proto_emit(f, n);
+    if (n) app_proto_emit_mask(mask, f, n);
 }
 
 static void emit_motor(void)
 {
     uint8_t f[APP_PROTO_HDR_LEN + 32 + 2];
     size_t n = app_proto_tele_motor(f, sizeof(f), &s_last_motor);
-    if (n) app_proto_emit(f, n);
+    if (n) app_proto_emit_to(s_reply_tr, f, n);
 }
 
 /* GRIP_GET_CALIB response, little-endian:
@@ -261,7 +263,34 @@ static void emit_grip_calib(uint8_t seq)
     memcpy(&pl[4], v, sizeof(v));      /* ESP32-C6 is little-endian */
     uint8_t f[APP_PROTO_HDR_LEN + sizeof(pl) + 2];
     size_t n = app_proto_build(f, sizeof(f), APP_PROTO_T_RESPONSE, seq, pl, (uint16_t)sizeof(pl));
-    if (n) app_proto_emit(f, n);
+    if (n) app_proto_emit_to(s_reply_tr, f, n);
+}
+
+/* OP_WIFI_GET_INFO response, little-endian:
+ *   op u8, started u8, station state u8 (0 none, 1 connecting, 2 connected),
+ *   client connected u8, AP ip u32, station ip u32, client ip u32,
+ *   AP ssid (u8 length + bytes), station ssid (u8 length + bytes). */
+static void emit_wifi_info(uint8_t seq)
+{
+    wireless_wifi_info_t wi;
+    memset(&wi, 0, sizeof(wi));
+    wireless_wifi_get_info(&wi);
+    uint8_t pl[4 + 12 + 1 + 32 + 1 + 32];
+    size_t k = 0;
+    pl[k++] = OP_WIFI_GET_INFO;
+    pl[k++] = wi.started ? 1 : 0;
+    pl[k++] = wi.sta_state;
+    pl[k++] = wi.client ? 1 : 0;
+    memcpy(&pl[k], &wi.ap_ip, 4); k += 4;
+    memcpy(&pl[k], &wi.sta_ip, 4); k += 4;
+    memcpy(&pl[k], &wi.client_ip, 4); k += 4;
+    size_t a = strnlen(wi.ap_ssid, 32);
+    pl[k++] = (uint8_t)a; memcpy(&pl[k], wi.ap_ssid, a); k += a;
+    size_t b = strnlen(wi.sta_ssid, 32);
+    pl[k++] = (uint8_t)b; memcpy(&pl[k], wi.sta_ssid, b); k += b;
+    uint8_t f[APP_PROTO_HDR_LEN + sizeof(pl) + 2];
+    size_t n = app_proto_build(f, sizeof(f), APP_PROTO_T_RESPONSE, seq, pl, (uint16_t)k);
+    if (n) app_proto_emit_to(s_reply_tr, f, n);
 }
 
 static bool is_motion_op(uint8_t op)
@@ -285,7 +314,7 @@ static bool is_motion_op(uint8_t op)
 static bool needs_unlock(uint8_t op)
 {
     return is_motion_op(op) || op == OP_MOTOR_CLEAR_ERR || op == OP_GRIP_SET_FORCE ||
-           op == OP_MOTOR_SAVE_CONFIG;
+           op == OP_MOTOR_SAVE_CONFIG || op == OP_WIFI_SET_STA;
 }
 
 /* Execute one decoded user command.
@@ -297,7 +326,24 @@ static bool needs_unlock(uint8_t op)
  * console is already sharing. */
 static void handle_cmd(const app_cmd_t *c)
 {
-    if (needs_unlock(c->op) && !s_unlocked) {
+    s_reply_tr = c->transport < APP_TR_COUNT ? c->transport : APP_TR_USB;
+    if (c->op == OP_INTERNAL_TRANSPORT_CLOSED) {
+        /* The peer of this transport left (BLE disconnect, TCP close). Relock
+         * it and stop its streams. A move it started stops where it is; a
+         * grip keeps holding the object (releasing it could drop it). */
+        s_unlock_mask &= (uint8_t)~APP_TR_BIT(s_reply_tr);
+        s_stream_imu &= (uint8_t)~APP_TR_BIT(s_reply_tr);
+        s_stream_haptic &= (uint8_t)~APP_TR_BIT(s_reply_tr);
+        gripper_status_t st;
+        gripper_get_status(&st);
+        if (st.state == GRIPPER_MOVING) {
+            gripper_stop();
+        }
+        ESP_LOGI(TAG, "transport %u closed: session locked%s", (unsigned)s_reply_tr,
+                 st.state == GRIPPER_MOVING ? ", move stopped" : "");
+        return;
+    }
+    if (needs_unlock(c->op) && !(s_unlock_mask & APP_TR_BIT(s_reply_tr))) {
         ESP_LOGW(TAG, "op 0x%02x rejected: session locked", c->op);
         reply_ack(c->seq, c->op, APP_PROTO_ERR_LOCKED);
         return;
@@ -318,13 +364,13 @@ static void handle_cmd(const app_cmd_t *c)
         uint8_t pl[4] = { OP_GET_VERSION, APP_PROTO_VERSION, FW_VERSION_MAJOR, FW_VERSION_MINOR };
         uint8_t f[APP_PROTO_HDR_LEN + sizeof(pl) + 2];
         size_t n = app_proto_build(f, sizeof(f), APP_PROTO_T_RESPONSE, c->seq, pl, sizeof(pl));
-        if (n) app_proto_emit(f, n);
+        if (n) app_proto_emit_to(s_reply_tr, f, n);
         break;
     }
     case OP_GET_STATE: {
         uint8_t f[APP_PROTO_HDR_LEN + 2 + 2];
         size_t n = app_proto_resp_state(f, sizeof(f), c->seq, (uint8_t)s_state);
-        if (n) app_proto_emit(f, n);
+        if (n) app_proto_emit_to(s_reply_tr, f, n);
         break;
     }
     case OP_SAFE_STOP:
@@ -332,12 +378,37 @@ static void handle_cmd(const app_cmd_t *c)
         reply_ack(c->seq, c->op, APP_PROTO_OK);   /* always allowed */
         break;
     case OP_SESSION_UNLOCK:
-        s_unlocked = (c->u0 == APP_PROTO_SESSION_KEY);
-        reply_ack(c->seq, c->op, s_unlocked ? APP_PROTO_OK : APP_PROTO_ERR_ARG);
+        /* per transport: unlocking USB does not let a BLE or Wi-Fi peer move the jaw */
+        if (c->u0 == APP_PROTO_SESSION_KEY) {
+            s_unlock_mask |= APP_TR_BIT(s_reply_tr);
+            reply_ack(c->seq, c->op, APP_PROTO_OK);
+        } else {
+            s_unlock_mask &= (uint8_t)~APP_TR_BIT(s_reply_tr);
+            reply_ack(c->seq, c->op, APP_PROTO_ERR_ARG);
+        }
         break;
     case OP_SESSION_LOCK:
-        s_unlocked = false;
+        s_unlock_mask &= (uint8_t)~APP_TR_BIT(s_reply_tr);
         reply_ack(c->seq, c->op, APP_PROTO_OK);
+        break;
+    case OP_WIFI_SET_STA: {
+        /* data = u8 ssid_len, ssid, u8 pass_len, pass */
+        char ssid[33] = {0}, pass[65] = {0};
+        size_t sl = c->data_len >= 1 ? c->data[0] : 0;
+        size_t pl_off = 1 + sl;
+        size_t pw = (c->data_len > pl_off) ? c->data[pl_off] : 0;
+        if (sl > 32 || pw > 64 || 1 + sl + 1 + pw > c->data_len) {
+            reply_ack(c->seq, c->op, APP_PROTO_ERR_ARG);
+            break;
+        }
+        memcpy(ssid, &c->data[1], sl);
+        memcpy(pass, &c->data[pl_off + 1], pw);
+        reply_ack(c->seq, c->op, wireless_wifi_set_sta(ssid, pass) == ESP_OK ? APP_PROTO_OK
+                                                                           : APP_PROTO_ERR_STATE);
+        break;
+    }
+    case OP_WIFI_GET_INFO:
+        emit_wifi_info(c->seq);
         break;
     case OP_SELF_CALIBRATE:
         /* Gripper calibration, which includes the tactile tare. The IMU
@@ -407,14 +478,15 @@ static void handle_cmd(const app_cmd_t *c)
             ESP_LOGW(TAG, "cannot enable USB telemetry: no fresh IMU data");
             reply_ack(c->seq, c->op, APP_PROTO_ERR_STATE);
         } else {
-            s_stream_imu = true;
-            ESP_LOGI(TAG, "USB IMU telemetry enabled");
+            s_stream_imu |= APP_TR_BIT(s_reply_tr);
+            ESP_LOGI(TAG, "IMU telemetry enabled on transport %u", (unsigned)s_reply_tr);
             reply_ack(c->seq, c->op, APP_PROTO_OK);
         }
         break;
     case OP_IMU_STREAM_DIS:
-        s_stream_imu = false;
-        ESP_LOGI(TAG, "USB IMU telemetry stopped (sensor acquisition remains active)");
+        s_stream_imu &= (uint8_t)~APP_TR_BIT(s_reply_tr);
+        ESP_LOGI(TAG, "IMU telemetry stopped on transport %u (sensor acquisition remains active)",
+                 (unsigned)s_reply_tr);
         reply_ack(c->seq, c->op, APP_PROTO_OK);
         break;
     case OP_IMU_GET:
@@ -468,20 +540,21 @@ static void handle_cmd(const app_cmd_t *c)
             ESP_LOGW(TAG, "cannot enable haptic USB telemetry: both sensors are not fresh");
             reply_ack(c->seq, c->op, APP_PROTO_ERR_STATE);
         } else {
-            s_stream_haptic = true;
-            ESP_LOGI(TAG, "USB haptic telemetry enabled");
+            s_stream_haptic |= APP_TR_BIT(s_reply_tr);
+            ESP_LOGI(TAG, "haptic telemetry enabled on transport %u", (unsigned)s_reply_tr);
             reply_ack(c->seq, c->op, APP_PROTO_OK);
         }
         break;
     case OP_HAPTIC_STREAM_DIS:
-        s_stream_haptic = false;
-        ESP_LOGI(TAG, "USB haptic telemetry stopped (sensor polling unchanged)");
+        s_stream_haptic &= (uint8_t)~APP_TR_BIT(s_reply_tr);
+        ESP_LOGI(TAG, "haptic telemetry stopped on transport %u (sensor polling unchanged)",
+                 (unsigned)s_reply_tr);
         reply_ack(c->seq, c->op, APP_PROTO_OK);
         break;
     case OP_HAPTIC_GET:
         if (both_haptic_fresh()) {
-            emit_haptic(0);
-            emit_haptic(1);
+            emit_haptic(0, APP_TR_BIT(s_reply_tr));
+            emit_haptic(1, APP_TR_BIT(s_reply_tr));
         } else {
             reply_ack(c->seq, c->op, APP_PROTO_ERR_STATE);
         }
@@ -660,7 +733,7 @@ static void supervisor_task(void *arg)
                 if (haptic.fz[p] > peak) peak = haptic.fz[p];
             }
             s_point_max[index] = (float)peak * 0.1f;   /* 0.1 N per LSB */
-            if (s_stream_haptic) emit_haptic(index);
+            if (s_stream_haptic) emit_haptic(index, s_stream_haptic);
         }
 
         /* Motor feedback (100 Hz while enabled, 20 Hz polls while disabled). */
@@ -767,8 +840,9 @@ int app_supervisor_start(const app_bus_t *bus, const app_supervisor_cfg_t *cfg)
         return ESP_ERR_INVALID_ARG;
     }
     s_bus = bus;
-    s_stream_imu = false;  /* USB telemetry is opt-in after every ESP32 boot. */
-    s_stream_haptic = false;
+    s_stream_imu = 0;      /* telemetry is opt-in after every ESP32 boot */
+    s_stream_haptic = 0;
+    s_unlock_mask = 0;
     s_have_imu = false;
     memset(s_have_haptic, 0, sizeof(s_have_haptic));
     memset(s_last_haptic_tick, 0, sizeof(s_last_haptic_tick));

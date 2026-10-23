@@ -20,6 +20,12 @@ CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
 # We act as a GATT server only; central/observer roles are not needed.
 # (Leave them at their defaults so NimBLE can still build.)
 
+# --- Partition table ------------------------------------------------------
+# USB + BLE + Wi-Fi do not fit the 1 MB app of the default table. The large
+# single-app table gives 1.5 MB and keeps nvs at the same offset and size,
+# so a stored calibration survives the change.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
 # --- FreeRTOS -------------------------------------------------------------
 # 1 kHz tick keeps the supervisor state machine responsive.
 CONFIG_FREERTOS_HZ=1000
