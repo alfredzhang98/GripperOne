@@ -84,6 +84,21 @@
  * strictly on MST_ID so foreign bus traffic can't be mis-read as feedback. */
 #define MOTOR_TWAI_ESC_ID 0x001
 #define MOTOR_TWAI_MST_ID 0x000
+/* Comms-loss timeout written to the motor (register 0x09) at every probe: if
+ * no command frame arrives for this long while enabled, the drive disables
+ * itself. Commands go out every 10 ms; 300 ms also covers an NVS flash write
+ * stalling the CPU. Not saved to the motor's flash. */
+#define MOTOR_TWAI_TIMEOUT_MS 300
+
+/* =========================================================================
+ * Gripper
+ * ========================================================================= */
+/* 1 = run GRIP_HOME once after boot as soon as the motor and both tactile
+ * pads are ready: with a calibration stored in NVS, the jaw opens to its stop,
+ * checks it against the stored one and restores the calibration (about 10 s);
+ * without one, a full calibration (open stop, then pad touch).
+ * 0 = no motion until the host sends GRIP_HOME (0x41) or GRIP_CALIBRATE (0x40). */
+#define GRIPPER_AUTOCAL_ON_BOOT 0  /* bench bring-up: start by command */
 
 /* =========================================================================
  * BLE
@@ -93,9 +108,11 @@
 /* =========================================================================
  * Safety limits
  * ========================================================================= */
-/* Per-module tactile normal force (N) that forces an immediate SAFE_STOP. Set
- * well above any normal grip (default clamp is ~5 N); tune to the sensor range. */
-#define GRIPPER_OVERFORCE_N 40.0f
+/* Pad normal force (N) that forces SAFE_STOP (motor off) while the motor is
+ * enabled. Last resort only: the gripper itself cuts current above its target
+ * and backs off at 20 N. CP-M3025 range is 0-25 N, so this must stay below
+ * 25 N to be detectable at all. */
+#define GRIPPER_OVERFORCE_N 24.0f
 
 /* =========================================================================
  * Task stack sizes (bytes) and priorities.
@@ -106,7 +123,7 @@
 #define TASK_STACK_HAPTIC 4096
 #define TASK_STACK_IMU 4096
 #define TASK_STACK_MOTOR 4096
-#define TASK_STACK_SUPERVISOR 4096
+#define TASK_STACK_SUPERVISOR 6144 /* gripper_tick + formatted logs */
 
 #define TASK_PRIO_HAPTIC 6 /* high-rate sensor ingest */
 #define TASK_PRIO_IMU 6

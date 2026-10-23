@@ -81,6 +81,8 @@ typedef struct {
     const app_bus_t  *bus;
     volatile bool acquisition_enabled;
     volatile bool calibrate_pending;
+    uint32_t tare_count;   /* finished tares; guarded by s_control_mux */
+    bool tare_ok;          /* result of the last one                   */
     uint32_t seq[HAPTIC_SENSOR_COUNT];
     uint32_t fail_count[HAPTIC_SENSOR_COUNT];
     int64_t last_fail_log_us[HAPTIC_SENSOR_COUNT];
@@ -295,10 +297,12 @@ static bool poll_sensor(haptic_ctx_t *ctx, uint8_t sensor_index, uint8_t module)
     if (!ok) {
         ctx->fail_count[sensor_index]++;
         int64_t now = esp_timer_get_time();
+        /* Once at the first failure, then a reminder a minute: a board that is
+         * unplugged on purpose must not fill the console. */
         if (ctx->fail_count[sensor_index] == 1 ||
-            now - ctx->last_fail_log_us[sensor_index] >= 1000000) {
+            now - ctx->last_fail_log_us[sensor_index] >= 60000000) {
             ESP_LOGW(TAG, "%s (module %u, force 0x%04X, dist 0x%04X): no valid "
-                          "reply (failures=%u)",
+                          "reply (failures=%u; next reminder in 60 s)",
                      sensor_name(sensor_index), module, module_force_addr(module),
                      module_dist_addr(module), (unsigned)ctx->fail_count[sensor_index]);
             ctx->last_fail_log_us[sensor_index] = now;
@@ -515,7 +519,12 @@ static void haptic_uart_task(void *arg)
         portEXIT_CRITICAL(&s_control_mux);
 
         if (calibrate) {
-            ESP_LOGI(TAG, "tare: %s", calibrate_all(ctx) ? "OK" : "FAILED");
+            bool ok = calibrate_all(ctx);
+            ESP_LOGI(TAG, "tare: %s", ok ? "OK" : "FAILED");
+            portENTER_CRITICAL(&s_control_mux);
+            ctx->tare_ok = ok;
+            ctx->tare_count++;
+            portEXIT_CRITICAL(&s_control_mux);
         }
 
         if (!acquisition) {
@@ -561,6 +570,20 @@ bool haptic_uart_calibrate(void)
     s_ctx->calibrate_pending = true;
     portEXIT_CRITICAL(&s_control_mux);
     return true;
+}
+
+uint32_t haptic_uart_tare_count(bool *last_ok)
+{
+    if (!s_ctx) {
+        if (last_ok) *last_ok = false;
+        return 0;
+    }
+    portENTER_CRITICAL(&s_control_mux);
+    uint32_t count = s_ctx->tare_count;
+    bool ok = s_ctx->tare_ok;
+    portEXIT_CRITICAL(&s_control_mux);
+    if (last_ok) *last_ok = ok;
+    return count;
 }
 
 int haptic_uart_start(const haptic_uart_cfg_t *cfg, const app_bus_t *bus)

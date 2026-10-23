@@ -13,7 +13,15 @@
     "--query-driver=**",
     "--compile-commands-dir=f:\\github\\gripper_Robotiq\\build"
   ],
-  "idf.currentSetup": "D:\\SDKs\\.espressif\\v6.0\\esp-idf",
+  "idf.currentSetup": "F:\\esp\\v6.0.2\\esp-idf",
   "idf.flashType": "UART",
-  "idf.port": "COM13"
+  "idf.port": "COM6",
+  "idf.openOcdConfigs": [
+    "board/esp32c6-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "OPENOCD_SCRIPTS": "C:\\Users\\uceeqz4\\.espressif\\tools\\openocd-esp32\\v0.10.0-esp32-20190708/openocd-esp32/share/openocd/scripts",
+    "OPENOCD_USB_ADAPTER_LOCATION": "2-13.4",
+    "IDF_TARGET": "esp32c6"
+  }
 }

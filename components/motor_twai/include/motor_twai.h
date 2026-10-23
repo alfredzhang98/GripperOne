@@ -1,34 +1,40 @@
 /**
  * @file motor_twai.h
- * @brief Motor control over TWAI (CAN 2.0), targeting the Damiao DM-J4310-2EC.
+ * @brief Damiao DM-J4310-2EC over TWAI (CAN 2.0), force-position mode only.
  *
- * Owns the TWAI driver and a task that (a) periodically transmits the command
- * frame for the currently-selected control mode and (b) drains received frames
- * into motor_status_t messages on bus->motor_status_q.
+ * The gripper drives the motor exclusively in the force-position mode
+ * ("力位混控", CTRL_MODE register 0x0A = 4). Every command frame carries a
+ * target position, a speed limit and a current limit, so the drive itself caps
+ * the current and therefore the jaw force. The other three Damiao modes (MIT,
+ * position-velocity, velocity) are deliberately not exposed: a command frame
+ * for another mode would be accepted on the same CAN ID (the drive checks only
+ * the low 8 ID bits, manual p.12) and decoded with the wrong byte layout.
  *
- * The DM-J4310 supports FOUR control modes, selected by register 0x0A
- * (CTRL_MODE). Each mode has its OWN command-frame ID offset and byte layout,
- * but the feedback frame is identical across modes. This driver implements all
- * four, plus the register read/write/save frames used to switch mode, retune
- * ranges, and change baud rate over CAN. See motor_twai.c for the exact byte
- * packing taken from the DM-J4310-2EC V1.2 manual (CAN communication chapter).
+ * START-UP PROBE. motor_twai_task does not command motion until it has, with
+ * the motor disabled:
+ *   1. seen a feedback frame in reply to a disable frame (motor powered, IDs
+ *      and bit rate right);
+ *   2. read PMAX/VMAX/TMAX (0x15..0x17) and switched the feedback decode to
+ *      those values instead of compiled-in guesses;
+ *   3. written CTRL_MODE = 4 and the comms-loss TIMEOUT (0x09), and read both
+ *      back. Neither write is saved to the motor's flash unless the host asks
+ *      for it (motor_twai_persist_config, opcode 0x17).
+ * The CAN hardware filter accepts every standard ID; the RX callback decodes
+ * only MST_ID and records other frames, which the probe prints when the motor
+ * does not answer (wrong CAN_ID / MST_ID are the usual first-power-up faults).
+ * motor_twai_is_ready() reports the result. A probe that fails is retried
+ * every second. If feedback stops for FEEDBACK_LOST_MS the driver drops back
+ * to "not ready", disables the motor and probes again; motor_twai_epoch()
+ * increments on every successful probe so a caller can tell that the drive may
+ * have rebooted and its position frame may have changed.
  *
- * TYPICAL USE
- *   1. motor_twai_start(&cfg, &bus);              // bring up the bus
- *   2. motor_twai_set_mode(MOTOR_MODE_VELOCITY);  // set motor CTRL_MODE (0x0A)
- *   3. motor_twai_enable();                        // FF..FC enable frame
- *   4. motor_twai_set_velocity(5.0f);              // stream setpoints @100 Hz
- *   ...
- *   5. motor_twai_disable();
- *
- * The command frame for the active mode is re-sent every 10 ms regardless of
- * whether the setpoint changed — this also services the motor's comms-loss
- * timeout protection (register 0x09 TIMEOUT), which disables the motor if no
- * CAN command arrives within the configured window.
+ * FEEDBACK. The drive only answers frames addressed to it (manual p.12). While
+ * enabled, the 100 Hz command stream provides feedback; while disabled, the
+ * task sends a disable frame every 50 ms as a status poll, so position and
+ * faults stay observable.
  *
  * HARDWARE NOTE: the ESP32-C6 has no built-in CAN transceiver. An external
- * 3.3 V transceiver (TCAN332 / SN65HVD230 / similar) is mandatory between the
- * TWAI TX/RX pins and the differential CAN bus.
+ * 3.3 V transceiver (TCAN332 / SN65HVD230 / similar) is mandatory.
  */
 #ifndef MOTOR_TWAI_H
 #define MOTOR_TWAI_H
@@ -37,139 +43,89 @@
 #include <stdbool.h>
 #include "app_protocol.h"
 
+/* Acceleration and deceleration of the drive's own trapezoid profile, output
+ * side, rad/s^2. Written to ACC / DEC (RAM only) at every probe; the drive's
+ * flash default of 2 capped every move (bench 2026-10-23). The gripper plans
+ * its moves with the same value. */
+#define MOTOR_TWAI_ACC_RAD_S2  80.0f
+
+/* Position-loop gain KP_APR written at every probe (RAM only); the drive's
+ * flash default is 54. 0 leaves the drive's value. Near the target the jaw
+ * closed in at about 11 x (remaining distance) rad/s with 54 (bench
+ * 2026-10-23), which took about 0.5 s of each 1.3-1.5 s move. */
+#define MOTOR_TWAI_KP_APR      108.0f
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Control modes = the value of register 0x0A (CTRL_MODE). The motor only
- * accepts the command frame that matches its current CTRL_MODE register. */
-typedef enum {
-    MOTOR_MODE_MIT       = 1,  /* MIT impedance: pos/vel/kp/kd/torque         */
-    MOTOR_MODE_POS_VEL   = 2,  /* position with trapezoidal velocity limit    */
-    MOTOR_MODE_VELOCITY  = 3,  /* constant velocity                           */
-    MOTOR_MODE_FORCE_POS = 4,  /* position + velocity-limit + current-limit   */
-} motor_ctrl_mode_t;
-
-/* DM-J4310 register addresses (RID) used by the CAN param read/write frames.
- * Full list is in the manual's "寄存器列表及范围" table. */
-#define MOTOR_REG_MST_ID     0x07  /* feedback frame ID          (uint32)     */
-#define MOTOR_REG_ESC_ID     0x08  /* receive/command frame ID   (uint32)     */
-#define MOTOR_REG_TIMEOUT    0x09  /* comms-loss timeout, 50us ticks (uint32) */
-#define MOTOR_REG_CTRL_MODE  0x0A  /* control mode 1..4          (uint32)     */
-#define MOTOR_REG_PMAX       0x15  /* position map range, rad    (float)      */
-#define MOTOR_REG_VMAX       0x16  /* velocity map range, rad/s  (float)      */
-#define MOTOR_REG_TMAX       0x17  /* torque map range, Nm       (float)      */
-#define MOTOR_REG_CAN_BR     0x23  /* CAN baud-rate code 0..4    (uint32)     */
-#define MOTOR_REG_P_MOTOR    0x50  /* current motor-side position, rad (float, RO) */
-#define MOTOR_REG_XOUT       0x51  /* output-shaft position, rad (float, RO)  */
-
-/* CAN baud-rate codes for register 0x23 (MOTOR_REG_CAN_BR). */
-typedef enum {
-    MOTOR_BAUD_125K = 0,
-    MOTOR_BAUD_200K = 1,
-    MOTOR_BAUD_250K = 2,
-    MOTOR_BAUD_500K = 3,
-    MOTOR_BAUD_1M   = 4,
-} motor_baud_code_t;
-
 typedef struct {
     int tx_gpio;
     int rx_gpio;
-    int bitrate_kbps;   /* 125 / 250 / 500 / 1000                             */
-    int esc_id;         /* host->motor command frame ID (<0 = built-in default) */
+    int bitrate_kbps;   /* 125 / 250 / 500 / 1000                                */
+    int esc_id;         /* host->motor command frame ID (<0 = built-in default)  */
     int mst_id;         /* motor->host feedback frame ID (<0 = built-in default) */
-    int task_stack;     /* task stack depth, bytes (0 = built-in default)     */
-    int task_prio;      /* FreeRTOS priority       (0 = built-in default)     */
+    int timeout_ms;     /* comms-loss TIMEOUT written at probe (<=0 = default)   */
+    int task_stack;     /* task stack depth, bytes (0 = built-in default)        */
+    int task_prio;      /* FreeRTOS priority       (0 = built-in default)        */
 } motor_twai_cfg_t;
 
-/**
- * @brief Install the TWAI driver, start the bus, and spawn motor_twai_task.
- * @return ESP_OK on success. The active control mode defaults to MIT.
- */
+/** Values read from the motor during the last successful probe. */
+typedef struct {
+    float    pmax;            /* rad,   register 0x15 (position map range)      */
+    float    vmax;            /* rad/s, register 0x16 (velocity map range)      */
+    float    tmax;            /* N*m,   register 0x17 (torque map range)        */
+    float    imax;            /* A,     register 0x3B (0 if the read failed)    */
+    float    tau_per_pu_est;  /* N*m per unit current, from registers; 0 = n/a  */
+    uint32_t timeout_ticks;   /* register 0x09 after the write, 50 us per tick  */
+    uint32_t ctrl_mode;       /* register 0x0A after the write (4 expected)     */
+} motor_twai_info_t;
+
+/** Install the TWAI driver, start the bus, and spawn motor_twai_task. */
 int motor_twai_start(const motor_twai_cfg_t *cfg, const app_bus_t *bus);
 
-/* ---- enable / fault control (data-segment fixed, any mode) -------------- */
+/** True after a successful probe while feedback keeps arriving. */
+bool motor_twai_is_ready(void);
 
-/** @brief Request the motor be enabled (FF..FC). Thread-safe. */
-void motor_twai_enable(void);
-/** @brief Request the motor be disabled (FF..FD). */
-void motor_twai_disable(void);
-/** @brief Set the current shaft position as zero (FF..FE). */
-void motor_twai_save_zero(void);
-/** @brief Clear a latched motor fault (FF..FB). */
-void motor_twai_clear_error(void);
+/** Increments on every successful probe (0 = never probed). */
+uint32_t motor_twai_epoch(void);
 
-/* ---- mode selection ----------------------------------------------------- */
+/** Milliseconds since the last feedback frame (UINT32_MAX if none yet). */
+uint32_t motor_twai_feedback_age_ms(void);
 
-/**
- * @brief Switch the motor's control mode by writing register 0x0A, and select
- *        the matching command frame for the periodic sender.
- *
- * The motor zeroes its position/velocity/torque/kp/kd command values on a mode
- * switch, and the change is NOT saved to flash (call motor_twai_save_params()
- * while disabled to persist). Switch at (near) zero speed to avoid a jolt; for
- * a position-holding mode, read register 0x50 first and command that position.
- */
-void motor_twai_set_mode(motor_ctrl_mode_t mode);
-
-/** @brief The control mode the periodic sender is currently transmitting. */
-motor_ctrl_mode_t motor_twai_get_mode(void);
-
-/* ---- per-mode setpoint interfaces --------------------------------------- *
- * Each setter updates the setpoint AND selects its mode as the one the
- * periodic sender transmits. The motor's CTRL_MODE register (0x0A) must
- * already match — use motor_twai_set_mode() (or the debug assistant) first. */
+/** Copy the probe results. @return false before the first successful probe. */
+bool motor_twai_get_info(motor_twai_info_t *out);
 
 /**
- * @brief MODE 1 (MIT). Full impedance command.
- * kp=0,kd!=0 + vel  -> constant-velocity spin.
- * kp=0,kd=0  + tff  -> pure torque output.
- * For position control kd MUST be non-zero or the motor oscillates / runs away.
- */
-void motor_twai_set_mit(float pos, float vel, float kp, float kd, float tff);
-
-/** @brief MODE 1 convenience: position only (vel/torque zeroed, gains kept). */
-void motor_twai_set_target(float target);
-/** @brief MODE 1 impedance gains. Kd should stay non-zero for stable holds. */
-void motor_twai_set_gains(float kp, float kd);
-
-/**
- * @brief MODE 2 (position-velocity). Drive to @p pos (rad) with a trapezoidal
- *        profile capped at |@p vel| (rad/s). ACC/DEC come from registers 0x04/0x05.
- */
-void motor_twai_set_pos_vel(float pos, float vel);
-
-/** @brief MODE 3 (velocity). Hold constant @p vel (rad/s). */
-void motor_twai_set_velocity(float vel);
-
-/**
- * @brief MODE 4 (force-position hybrid). Drive to @p pos (rad) under a speed
- *        cap and a torque-current cap.
- * @param vel_limit rotor speed cap, rad/s, clamped to 0..100.
- * @param cur_limit current-limit per-unit (I/Imax), clamped to 0..1.0.
+ * @brief Set the force-position setpoint: target position (rad, drive frame),
+ *        speed limit (rad/s, clamped 0..100) and current limit (per unit of
+ *        the drive's maximum phase current, clamped 0..1). The three values are
+ *        stored together, so a command frame never mixes old and new fields.
  */
 void motor_twai_set_force_pos(float pos, float vel_limit, float cur_limit);
 
-/* ---- register access (config frames on CAN ID 0x7FF) -------------------- */
+/**
+ * @brief Enable the motor and immediately send the current setpoint.
+ * @return false if the probe has not succeeded, feedback is stale, or no
+ *         setpoint was set since the last disable (call set_force_pos first).
+ */
+bool motor_twai_enable(void);
 
-/** @brief Write a float register (RID). Takes effect immediately, not saved. */
-void motor_twai_write_param_f32(uint8_t rid, float value);
-/** @brief Write a uint32 register (RID). Takes effect immediately, not saved. */
-void motor_twai_write_param_u32(uint8_t rid, uint32_t value);
-/** @brief Persist all registers to flash. DISABLED mode only; ~1e4 write cycles. */
-void motor_twai_save_params(void);
-/** @brief Change CAN baud rate (writes register 0x23). Effective after switch-over. */
-void motor_twai_set_baudrate(motor_baud_code_t code);
+/** @brief Disable the motor (FF..FD) and invalidate the setpoint. Thread-safe. */
+void motor_twai_disable(void);
+
+/** @brief Clear a latched motor fault (FF..FB). The motor stays disabled. */
+void motor_twai_clear_error(void);
 
 /**
- * @brief Request a register read (RID). The reply arrives asynchronously on the
- *        feedback ID; poll motor_twai_get_param_*() to retrieve the cached value.
+ * @brief Save CTRL_MODE = 4 and the comms-loss TIMEOUT in the motor's own flash
+ *        (register writes, then the 0xAA store command; manual p.15-16), so a
+ *        motor that restarts comes back in force-position mode. Only while the
+ *        motor is probed and disabled. The motor's flash has about 10000 write
+ *        cycles: call on an explicit request only, never periodically.
+ * @return true when the motor acknowledged the store.
  */
-void motor_twai_request_param(uint8_t rid);
-/** @brief Fetch the last cached read of register @p rid as uint32. @return false if never read. */
-bool motor_twai_get_param_u32(uint8_t rid, uint32_t *out);
-/** @brief Fetch the last cached read of register @p rid as float. @return false if never read. */
-bool motor_twai_get_param_f32(uint8_t rid, float *out);
+bool motor_twai_persist_config(void);
 
 #ifdef __cplusplus
 }

@@ -46,6 +46,14 @@ bool haptic_uart_acquisition_enabled(void);
 /** Schedule a board-wide tare (function 0x17, register 0x0002 = 1). */
 bool haptic_uart_calibrate(void);
 
+/**
+ * Number of tares the driver has finished since start-up, successful or not.
+ * A caller that requested a tare waits for this to change; @p last_ok (may be
+ * NULL) then tells whether the board acknowledged that tare. Polling pauses
+ * for about a second while a tare runs.
+ */
+uint32_t haptic_uart_tare_count(bool *last_ok);
+
 #ifdef __cplusplus
 }
 #endif

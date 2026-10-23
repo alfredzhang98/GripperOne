@@ -112,6 +112,7 @@ typedef struct {
  * ------------------------------------------------------------------------- */
 typedef struct {
     uint32_t seq;
+    uint32_t t_ms;       /* receive time, FreeRTOS tick in ms (ISR stamp)     */
     bool     enabled;    /* ERR field == 1 (enabled); 0 = disabled            */
     float    position;   /* rad                                               */
     float    velocity;   /* rad/s                                             */
@@ -145,14 +146,22 @@ typedef enum {
     OP_SESSION_UNLOCK  = 0x07,  /* u0 = key; required before motor actuation  */
     OP_SESSION_LOCK    = 0x08,
 
-    /* --- motor (0x1-) --- (actuation requires an unlocked session) */
-    OP_MOTOR_ENABLE     = 0x10,
-    OP_MOTOR_DISABLE    = 0x11,
-    OP_MOTOR_SET_TARGET = 0x12, /* f0 = target position (rad) / grip          */
-    OP_MOTOR_SET_GAINS  = 0x13, /* f0 = Kp, f1 = Kd                           */
-    OP_MOTOR_SAVE_ZERO  = 0x14, /* set current position as zero               */
-    OP_MOTOR_CLEAR_ERR  = 0x15,
+    /* --- motor (0x1-) ---
+     * 0x10 ENABLE, 0x12 SET_TARGET, 0x13 SET_GAINS and 0x14 SAVE_ZERO are
+     * RETIRED and answer ERR_OPCODE: the gripper owns the motor in
+     * force-position mode. ENABLE bypassed its limits, SET_TARGET/SET_GAINS
+     * were MIT-mode commands, SAVE_ZERO moves the drive's position frame under
+     * the calibration. The numbers stay reserved. */
+    OP_MOTOR_ENABLE     = 0x10, /* retired                                    */
+    OP_MOTOR_DISABLE    = 0x11, /* motor off now (always allowed)             */
+    OP_MOTOR_SET_TARGET = 0x12, /* retired                                    */
+    OP_MOTOR_SET_GAINS  = 0x13, /* retired                                    */
+    OP_MOTOR_SAVE_ZERO  = 0x14, /* retired                                    */
+    OP_MOTOR_CLEAR_ERR  = 0x15, /* clear drive fault + SAFE_STOP latch (unlock) */
     OP_MOTOR_GET_STATUS = 0x16, /* -> motor telemetry                        */
+    OP_MOTOR_SAVE_CONFIG= 0x17, /* store CTRL_MODE 4 + TIMEOUT in the motor's
+                                 * flash (unlock; motor disabled; ~10000 flash
+                                 * cycles - only when the motor is new/reset) */
 
     /* --- IMU (0x2-) --- */
     OP_IMU_STREAM_EN    = 0x20,
@@ -185,16 +194,22 @@ typedef enum {
     OP_HAPTIC_ACQ_EN    = 0x35, /* resume CP-M3025 polling                    */
     OP_HAPTIC_ACQ_DIS   = 0x36, /* stop polling; USB stream switch unchanged */
 
-    /* --- gripper high-level app (0x4-) --- (motion; require unlock) */
-    OP_GRIP_CALIBRATE  = 0x40,  /* auto-find closed+open stops, save to flash */
-    OP_GRIP_HOME       = 0x41,  /* go to fully-closed zero                    */
-    OP_GRIP_SET_OPEN   = 0x42,  /* f0 = opening 0.0 (closed) .. 1.0 (open)    */
-    OP_GRIP_GRIP       = 0x43,  /* f0 = clamp current pu 0..1 (0 = default)   */
-    OP_GRIP_RELEASE    = 0x44,  /* open fully                                 */
-    OP_GRIP_SET_FORCE  = 0x45,  /* f0 = default clamp current pu, persist     */
-    OP_GRIP_STOP       = 0x46,  /* hold current position                     */
-    OP_GRIP_GET_CALIB  = 0x47,  /* -> calibration response (read-only)        */
-    OP_GRIP_MOVE_DEG   = 0x48,  /* f0 = output-shaft angle deg, f1 = deg/s    */
+    /* --- gripper high-level app (0x4-) --- (0x40-0x45, 0x48 need unlock) */
+    OP_GRIP_CALIBRATE  = 0x40,  /* full: open stop (current) + pad touch (tactile), saved */
+    OP_GRIP_HOME       = 0x41,  /* open-stop check, then the saved calibration (else full) */
+    OP_GRIP_SET_CLOSE  = 0x42,  /* f0 = closing percent 5 .. 95 (0 = open
+                                 * position, 100 = closed); optional f1 = speed
+                                 * rad/s, 0.05 .. 15 (0 or absent = 2.0)      */
+    OP_GRIP_GRIP       = 0x43,  /* f0 = target pad force N (<= 0 = default);
+                                 * optional f1 = approach speed rad/s, 0.05 ..
+                                 * 15 (0 or absent = 2.0). Moves
+                                 * to 80 % opening, then closes; no pad force by
+                                 * 95 % closed -> "empty grasp", back to 80 %  */
+    /* 0x44 (GRIP_RELEASE) removed: GRIP_SET_CLOSE 5 opens as far as allowed */
+    OP_GRIP_SET_FORCE  = 0x45,  /* f0 = default pad force N, persisted        */
+    OP_GRIP_STOP       = 0x46,  /* hold current position (always allowed)     */
+    OP_GRIP_GET_CALIB  = 0x47,  /* -> calibration + status response          */
+    OP_GRIP_MOVE_DEG   = 0x48,  /* f0 = deg from the closed position, f1 = deg/s */
 } app_op_t;
 
 /* A decoded, validated user command handed to the supervisor via ctrl_q. */

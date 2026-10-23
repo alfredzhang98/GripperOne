@@ -173,10 +173,13 @@ static void decode_args(app_cmd_t *cmd, const uint8_t *pl, uint16_t plen)
     /* pl[0] is the opcode (already stored). Args start at pl[1]. */
     switch (cmd->op) {
     case OP_MOTOR_SET_TARGET:
-    case OP_GRIP_SET_OPEN:
-    case OP_GRIP_GRIP:
     case OP_GRIP_SET_FORCE:
         if (plen >= 1 + 4) cmd->f0 = get_f32(&pl[1]);
+        break;
+    case OP_GRIP_GRIP:        /* f1 (speed) optional */
+    case OP_GRIP_SET_CLOSE:   /* f1 (speed) optional */
+        if (plen >= 1 + 4) cmd->f0 = get_f32(&pl[1]);
+        if (plen >= 1 + 8) cmd->f1 = get_f32(&pl[5]);
         break;
     case OP_MOTOR_SET_GAINS:
     case OP_GRIP_MOVE_DEG:
@@ -198,7 +201,7 @@ static uint16_t min_command_payload(uint8_t op)
 {
     switch (op) {
     case OP_MOTOR_SET_TARGET:
-    case OP_GRIP_SET_OPEN:
+    case OP_GRIP_SET_CLOSE:
     case OP_GRIP_GRIP:
     case OP_GRIP_SET_FORCE:
     case OP_SESSION_UNLOCK:

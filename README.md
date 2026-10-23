@@ -2,6 +2,8 @@
 
 这是一个基于开源夹爪工程进一步改造的项目，结合了压力传感器和完整无线控制电路，目标是在原有夹爪基础上提升感知能力与控制便利性。
 
+夹爪电机控制的用法、实测结果、参数范围和电流计算见 [README_gripper.md](README_gripper.md)。
+
 ## 项目来源
 
 - 原始开源夹爪工程：<https://github.com/Ragtime-LAB/RhinoV2.0_Gripper>
@@ -58,11 +60,11 @@ gripper_plus/
    ├─ board_xiao_esp32c6/    # board bring-up (NVS, banner)
    ├─ haptic_uart/           # UART1 921600, integration-board register polling
    ├─ imu_uart/              # UART0 boot 9600 -> run 115200, WIT 11-byte parser
-   ├─ motor_twai/            # TWAI (CAN) DM-J4310 MIT-mode codec + API
-   ├─ oled_sh1106/           # optional I2C OLED (APP_ENABLE_OLED)
-   ├─ wireless_ble/          # NimBLE GATT control interface
+   ├─ motor_twai/            # TWAI (CAN) DM-J4310, force-position mode only, start-up probe
+   ├─ transport_uart/        # app_proto over the native USB Serial/JTAG (default transport)
+   ├─ wireless_ble/          # NimBLE GATT control interface (not started by default)
    ├─ wireless_wifi/         # optional Wi-Fi control path (skeleton)
-   ├─ gripper/               # high-level app: auto-calibrate, force-grip, NVS
+   ├─ gripper/               # boot calibration (current + tactile) and tactile force grip
    └─ app_supervisor/        # INIT/IDLE/ACTIVE/ERROR/SAFE_STOP + gripper tick
 ```
 
@@ -185,10 +187,8 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 
 - **Pins** — edit `main/app_pins.h`.
 - **Baud rates / ports / task sizes** — edit `main/app_config.h`.
-- **Feature flags** — in `main/app_config.h`:
-  - `APP_ENABLE_OLED` (default 1) — SH1106 display + `oled_task`
-  - `APP_ENABLE_BLE`  (default 1) — NimBLE GATT control
-  - `APP_ENABLE_WIFI` (default 0) — Wi-Fi control skeleton
+- **Transport** — `APP_TRANSPORT` in `main/app_config.h` (default `TRANSPORT_UART`:
+  app_proto over the USB-C port; BLE and Wi-Fi are not started).
 - Deeper options via `idf.py menuconfig`.
 
 ## FreeRTOS tasks
@@ -198,8 +198,7 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 | `haptic_uart`     | haptic_uart      | ingest high-rate pressure data → `haptic_q`     |
 | `imu_uart`        | imu_uart         | ingest IMU packets → `imu_q`                    |
 | `motor_twai`      | motor_twai       | TX motor command / RX status → `motor_status_q` |
-| `ble_control`     | wireless_ble     | NimBLE host; parses framed protocol → `ctrl_q`  |
-| `oled` (optional) | oled_sh1106      | render system/sensor status                     |
+| `usj_rx`          | transport_uart   | USB Serial/JTAG RX; parses framed protocol → `ctrl_q` |
 | `supervisor`      | app_supervisor   | state machine + safety, drains all queues       |
 
 控制不再是"明文单字节"，而是走下面统一的 **用户通信协议**（BLE 与 Wi-Fi 共用）。
@@ -254,23 +253,26 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 | `0x01` | PING | 无 | 否 | 心跳/连通性测试，回 ACK OK |
 | `0x02` | GET_VERSION | 无 | 否 | 查询协议版本+固件版本，回 RESPONSE |
 | `0x03` | GET_STATE | 无 | 否 | 查询状态机状态，回 RESPONSE |
-| `0x04` | SELF_CALIBRATE | 无 | **是** | **整机自校准**：依次做 IMU 自校准 + 触觉清零 + 电机位置置零 |
+| `0x04` | SELF_CALIBRATE | 无 | **是** | 等同 `GRIP_CALIBRATE`（夹爪标定，含触觉清零）。IMU 校准需静止水平，单独用 `0x23` |
 | `0x05` | SET_TELEM_RATE | u16 Hz | 否 | 设置遥测上报频率（默认 20Hz；受 50Hz 控制循环限制，超出按 50Hz 钳制） |
 | `0x06` | SAFE_STOP | 无 | 否（安全指令，永远允许） | 立即断电机并进入 SAFE_STOP |
 | `0x07` | SESSION_UNLOCK | u32 密钥 | 否 | 会话解锁；密钥 = `0x47521000`，正确才解锁 |
 | `0x08` | SESSION_LOCK | 无 | 否 | 重新上锁 |
 
-### 电机类 `0x1-`（全部需解锁）
+### 电机类 `0x1-`
 
-| 操作码 | 名称 | 参数 | 说明 |
-| --- | --- | --- | --- |
-| `0x10` | MOTOR_ENABLE | 无 | 使能电机（发达妙 `…FC` 帧），进入 ACTIVE |
-| `0x11` | MOTOR_DISABLE | 无 | 失能电机（`…FD`），进入 IDLE |
-| `0x12` | MOTOR_SET_TARGET | f32 | 设置目标位置（rad）/夹持量，仅 ACTIVE 下有效 |
-| `0x13` | MOTOR_SET_GAINS | f32 Kp, f32 Kd | 设置 MIT 阻抗增益（Kd 建议非 0） |
-| `0x14` | MOTOR_SAVE_ZERO | 无 | 把当前位置设为零点（`…FE`） |
-| `0x15` | MOTOR_CLEAR_ERR | 无 | 清除电机错误（`…FB`），从 ERROR 回到 IDLE |
-| `0x16` | MOTOR_GET_STATUS | 无 | 立刻回一帧电机遥测 |
+电机只由夹爪层（`components/gripper/`）以力位混控模式驱动。直接驱动电机的旧指令已停用，回 `ERR_OPCODE`：`0x10` 使能会绕过夹爪的电流和力限制；`0x12`/`0x13` 是 MIT 模式指令，与力位混控模式的帧格式不同；`0x14` 保存零点会移动电机的位置坐标系，使标定结果失效。
+
+| 操作码 | 名称 | 参数 | 需解锁 | 说明 |
+| --- | --- | --- | --- | --- |
+| `0x10` | MOTOR_ENABLE | — | — | 已停用 |
+| `0x11` | MOTOR_DISABLE | 无 | 否 | 立即失能电机，夹爪停止动作 |
+| `0x12` | MOTOR_SET_TARGET | — | — | 已停用 |
+| `0x13` | MOTOR_SET_GAINS | — | — | 已停用 |
+| `0x14` | MOTOR_SAVE_ZERO | — | — | 已停用 |
+| `0x15` | MOTOR_CLEAR_ERR | 无 | 是 | 清除电机故障，并解除 SAFE_STOP 锁定 |
+| `0x16` | MOTOR_GET_STATUS | 无 | 否 | 立刻回一帧电机遥测 |
+| `0x17` | MOTOR_SAVE_CONFIG | 无 | 是 | 把控制模式 4 和通讯超时写入电机自身 flash（发送 0xAA 存储命令，电机须失能）。电机 flash 约可擦写 1 万次，只在新电机或电机参数被改过时执行一次 |
 
 ### IMU 类 `0x2-`
 
@@ -297,18 +299,18 @@ If the board is not auto-detected, put it in download mode (hold **BOOT**, tap
 | `0x35` | HAPTIC_ACQ_EN | 无 | 恢复传感器→ESP32 请求/应答轮询 |
 | `0x36` | HAPTIC_ACQ_DIS | 无 | 停止轮询；不改变 USB 流开关 |
 
-### 夹爪高级动作 `0x4-`（`0x40~0x46` 需解锁，`0x47` 只读）
+### 夹爪高级动作 `0x4-`（除 `0x46`、`0x47` 外均需解锁）
 
 | 操作码 | 名称 | 参数 | 说明 |
 | --- | --- | --- | --- |
-| `0x40` | GRIP_CALIBRATE | 无 | **自动标定**：合拢撞限位→回退定零点，张开撞限位→回退定最大开合，写入 flash |
-| `0x41` | GRIP_HOME | 无 | 回到完全闭合零点 |
-| `0x42` | GRIP_SET_OPEN | f32 | 开合度 0.0（闭合）~ 1.0（最大），在标定范围内线性映射 |
-| `0x43` | GRIP_GRIP | f32 | 定力夹持；参数为目标夹持力(N)，0 表示用 flash 里的默认力 |
-| `0x44` | GRIP_RELEASE | 无 | 张开到最大 |
-| `0x45` | GRIP_SET_FORCE | f32 | 设置并**持久化**默认夹持力(N) |
-| `0x46` | GRIP_STOP | 无 | 保持当前位置 |
-| `0x47` | GRIP_GET_CALIB | 无 | 读取标定结果，回 RESPONSE（有效位+闭合位+最大位+默认力+夹爪状态） |
+| `0x40` | GRIP_CALIBRATE | 无 | 完整标定：张开到机械限位（电流判断）后回退，触觉清零，合拢到两块触觉垫接触后回退；结果写入 ESP32 的 NVS，覆盖旧记录 |
+| `0x41` | GRIP_HOME | 无 | 原点检查：触觉清零后慢速合拢到两垫接触，与 NVS 中保存的接触位置比较，相差 ≤ 0.03 rad（或整圈 2π 加 ≤ 0.03 rad）则平移并恢复保存的标定，停在闭合 5 %；相差更大则报错，保存的标定保留（多半是两垫之间有东西）。没有保存的标定时执行完整标定 |
+| `0x42` | GRIP_SET_CLOSE | f32 [, f32] | 闭合百分比 5–95（0 = 标定的最大位置，100 = 最小位置，两端各留 5 % 余量；超出时移到较近的一端）；可选第二个数为速度（输出轴 rad/s，0.05–15，省略或 0 为 2）。张开用 5 |
+| `0x43` | GRIP_GRIP | f32 [, f32] | 定力夹取，参数为目标夹持力（N），≤ 0 表示用默认力；范围 0.5–20 N。可选第二个数为接近速度（rad/s，0.05–15，省略或 0 为 2）。夹爪比 80 % 开度更合拢时先张开到 80 %，否则从当前位置直接合拢；合拢到 95 % 仍没有触觉力则报“empty grasp”（未检测到物体）并回到 80 % 开度；检测到物体后按力闭环夹持，位置随物体自适应；物体被取走同样回到 80 % 开度 |
+| `0x45` | GRIP_SET_FORCE | f32 | 设置并保存默认夹持力（N），范围 0.5–20 N |
+| `0x46` | GRIP_STOP | 无 | 保持当前位置（不需解锁） |
+| `0x47` | GRIP_GET_CALIB | 无 | 回 RESPONSE：有效位、夹爪状态、最近故障码 + 10 个 f32（最小/最大/接触位置 rad、k N/pu、偏置电流 pu、移动电流 pu、默认力 N、当前位置 rad、开合度、目标力 N） |
+| `0x48` | GRIP_MOVE_DEG | f32 角度, f32 速度 | 相对最小位置的输出轴角度（°）与速度（°/s） |
 
 ## 三、遥测显式启用
 
@@ -342,13 +344,10 @@ USB 上报与 IMU → ESP32 采集是两个独立开关：关闭其中一个不�
 
 ```
 1) SESSION_UNLOCK(密钥)      -> ACK OK        # 先解锁
-2) MOTOR_ENABLE              -> ACK OK        # 使能（自动开电机遥测）
-3) IMU_STREAM_EN             -> ACK OK        # 开 IMU 流
-4) HAPTIC_STREAM_EN          -> ACK OK        # 开触觉流
-5) MOTOR_SET_TARGET(0.5)     -> ACK OK        # 控制夹爪
-   ...  设备持续上报 TELEMETRY(IMU/触觉/电机)
-6) SELF_CALIBRATE            -> ACK OK        # 需要时整机自校准
-7) MOTOR_DISABLE / SAFE_STOP                  # 收工
+2) 首次：GRIP_CALIBRATE（约 50 s）；之后每次上电：GRIP_HOME（约 10 s），GRIP_GET_CALIB 查看结果
+3) GRIP_GRIP(5.0)            -> ACK OK        # 以 5 N 夹取
+4) GRIP_SET_CLOSE 5          -> ACK OK        # 张开
+5) SAFE_STOP / MOTOR_DISABLE                  # 任何时候都可立即停止
 ```
 
 ## 七、真实示例帧（含正确 CRC，可直接发）
@@ -360,9 +359,6 @@ USB 上报与 IMU → ESP32 采集是两个独立开关：关闭其中一个不�
 | PING | `A5 5A 01 00 01 01 00 01 15 1A` |
 | GET_STATE | `A5 5A 01 00 02 01 00 03 8B A1` |
 | 解锁 UNLOCK(0x47521000) | `A5 5A 01 00 03 05 00 07 00 10 52 47 E7 4B` |
-| 电机使能 | `A5 5A 01 00 04 01 00 10 40 A4` |
-| 设目标 0.5 rad | `A5 5A 01 00 05 05 00 12 00 00 00 3F 00 38` |
-| 设增益 Kp5 Kd1 | `A5 5A 01 00 06 09 00 13 00 00 A0 40 00 00 80 3F 2C F1` |
 | 开 IMU 流 | `A5 5A 01 00 07 01 00 20 CF 09` |
 | 开触觉流 | `A5 5A 01 00 08 01 00 30 10 CF` |
 | 整机自校准 | `A5 5A 01 00 09 01 00 04 73 CF` |
@@ -399,68 +395,96 @@ USB 上报与 IMU → ESP32 采集是两个独立开关：关闭其中一个不�
 
 # 夹爪高级功能（应用层 `components/gripper/`）
 
-把底层"发 CAN 帧转电机"封装成"夹爪该有的动作"。核心是一个状态机 `gripper_tick()`，由 `supervisor` 每个控制周期（~50Hz）喂入最新的**电机反馈 + 触觉数据**来推进。
+电机工作在达妙**力位混控模式**（寄存器 0x0A = 4）。每一帧命令同时给出目标位置、速度上限和电流上限（相对驱动器最大相电流的标幺值），驱动器自己把电流限制在上限以内，因此任何时刻夹持力都有上限。`gripper_tick()` 由 supervisor 每 10 ms 调用一次，输入是电机反馈和两块触觉垫的合力。
 
-## 一、自动标定（找零点与最大开合，写 flash）
+## 一、上电自检（`motor_twai`）
 
-`GRIP_CALIBRATE (0x40)` 触发，全自动、无需人工量：
+电机失能状态下读取 PMAX/VMAX/TMAX（0x15–0x17），反馈解码改用读回的数值；PMAX 只接受 9–25 rad。写入控制模式 4 和通讯超时 300 ms（0x09），并读回确认。以上写入都不存入电机 flash。自检不通过就不允许任何运动，每秒重试一次。
 
-1. **找闭合限位**：以"命令位置永远比当前位置领先一点点"的方式慢速合拢——这样施加的力矩被限制住，不会硬怼。撞到机械限位后电机走不动，**速度≈0 持续一段时间**即判定到限位。
-2. 从限位**回退一个余量**（`CAL_BACKOFF_RAD`）作为**闭合零点 `pos_closed`**（对应开合度 0）。
-3. **找张开限位**：反方向重复，撞到张开限位→回退→**最大开合 `pos_open`**（对应开合度 1）。
-4. 把 `{pos_closed, pos_open, 默认夹持力}` 存进 **NVS flash**（`nvs namespace "gripper"`），断电不丢；开机 `gripper_init()` 自动读回。
+运行中的保护：
+- 每次使能前重新读 0x0A 和 0x09，不符就重新自检（电机重启后会回到 flash 里的模式）。
+- 使能后反馈却显示“失能且无故障码”，判定电机重启，重新自检。
+- 驱动器报故障时，电机断电并锁定，直到收到 `MOTOR_CLEAR_ERR`（命令行 `clear`）。例外：开机后第一帧反馈就是 0xD（CAN 通信丢失）时，说明本板在电机使能时重启过（烧录、复位），驱动器已自行停机；固件自动清除一次，电机保持断电。开机 1 s 之后再出现 0xD 仍按故障锁定。
+- 自检时把驱动器的梯形加减速度 ACC/DEC 写为 ±80 rad/s²、位置环增益 KP_APR 写为 108（只写内存，每次自检重写，不存入驱动器 flash）。驱动器出厂值 ACC/DEC ±2 rad/s² 把所有移动限制在约 0.9 rad/s；KP_APR 54 时，临近目标按约 11 × 剩余距离 rad/s 逼近，每次移动最后约 0.5 s 花在这一段。台架 2026-10-23，闭合 5 %↔95 %（6.4 rad）、15 rad/s：KP_APR 54 时单程 1.29–1.40 s，108 时 0.81–0.89 s，两者都没有越过目标。
+- 设定值 150 ms 未刷新，电机任务自行失能电机。
+- 反馈中断超过 300 ms，失能并重新自检。
+- 每次重新自检后自检计数加一，夹爪据此作废当前标定，需要 `GRIP_HOME`（原点检查）或 `GRIP_CALIBRATE`。
+- 反馈中断时删除并重建 TWAI 节点。原因：没有节点应答的帧会被控制器一直重发，若不清除，电机恢复供电时会收到断电前的旧命令帧。
+- 自检失败时的诊断（第 1–3 次和之后每 10 次打印）：CAN 控制器状态、发送/接收错误计数、按类型统计的总线错误（ACK、位、格式、填充），以及收到的其它 ID 的帧。硬件滤波接收所有标准帧，由接收回调只解码 MST_ID，其它帧只做记录。判读：只有 ACK 错误 = 帧已发到总线但电机未应答（查电机供电、CANH/CANL 是否接到电机、是否接反、终端电阻）；位错误 = 本机收发器或 TX/RX 接线；格式/填充错误 = 波特率不一致；收到其它 ID = 电机的 CAN_ID 或 Master ID 与配置不同，日志会给出应改的宏。
+- `MOTOR_SAVE_CONFIG`（`0x17`）可把模式 4 和通讯超时存入电机 flash，使电机自己重启后仍处于力位混控模式。
 
-> 判定用的是电机**速度**（撞死后速度归零）而非硬阈值电流，更好调；力矩/电流可作二次确认。方向 `GRIPPER_CLOSE_DIR`、余量、停滞时长等都在 `gripper.c` 顶部集中，接上真机后按需微调（已标 `TODO`）。
+## 二、标定（`0x40` 触发；`main/app_config.h` 中 `GRIPPER_AUTOCAL_ON_BOOT` 为 1 时上电 60 s 内自动执行一次 `GRIP_HOME`，当前为 0）
 
-## 二、开合控制
+1. 电机失能，记录两块触觉垫的基线。
+2. **找最大位置**：以 0.05 rad/s 张开。电流上限从 0.005 pu 起，夹爪不动时每 150 ms 乘 1.15；夹爪动起来后设为 0.45 N·m（0.36 × 1.25，按自检读到的 Kt × Imax 换算，本电机 19.27 N·m/pu）。本夹爪张开端没有硬限位，越往外张开所需力矩越大（台架：行程中段 0.28 N·m，72 mm 处 0.32，约 77 mm 处 0.40，80 mm 处 0.51 N·m），所以张开力矩的 0.5 s 平均值达到 0.36 N·m（`CAL_OPEN_TQ_NM`）即为张开端；开始运动 400 ms 后 0.1 s 平均值达到 0.414 N·m 也立即判定。在 0.45 N·m 上限下停住时，力矩已超过阈值，同样判为张开端。开始张开 0.3 rad 内就达到阈值（起始位置已在张开端之外）时，先合拢 2.5 rad 再张开一次。从张开端回退 0.10 rad，记为最大位置。张开过程中任一垫比基线高 0.5 N 即中止并反向后退：`CLOSE_DIR` 方向反了。若持续以不到指令 40 % 的速度移动，以“speed mismatch”中止。台架 2026-10-23：起动电流的 1.5 倍（0.29 N·m）曾作为上限，低于阈值，夹爪在行程中途停住并被误判为张开端，因此改为上述固定上限。
+3. 在最大位置做触觉清零。
+4. **找最小位置**：合拢。离上次记录的接触位置 0.25 rad 以外用 0.3 rad/s，之内（首次标定为全程）用 0.05 rad/s。开始滑动 300 ms 后，按力矩反馈算出维持滑动所需电流，把上限改为它的 1.5 倍再加 0.024 N·m，且高出滑动所需的部分不超过 10 N × 名义杠杆（触觉读数全为 0 时，垫上的力由这部分决定）。之后每 300 ms 按当地摩擦重新计算一次，可降可升，但不超过第一次的值。任一垫第一次读到 0.3 N 就停在该位置。两块垫都连续两次读到 0.3 N，或其中一块连续两次读到 0.3 N 且在原位保持 0.5 s，记为接触位置。两个夹指不完全平行，轻接触时可能只压到一块垫的测点（台架 2026-10-22：两垫互压，ring 1.03 N 时 little 0.00 N；手压时 ring 4.10 N、little 1.90 N），所以只有一块垫读到接触不算故障；标定和夹取都取两块垫中较大的读数作为夹持力。然后在接触位置轻压两块垫，测“电流→夹持力”系数 k（N/pu）和垫刚度（N/rad）：
+   - 先退到接触位置后 0.01 rad 卸载；
+   - 电流上限按台阶升高，每级 = 0.002 N·m ÷ 限位处实测的 N·m/pu，取整到电流指令的分辨率 0.0001 pu（本电机每级 1 个分辨率，垫上约 0.19 N）；
+   - 每级保持 150 ms，夹爪停稳后取最后 50 ms 的触觉平均值记一个点，日志逐点打印 “squeeze point”；
+   - 在 0.5–2.0 N 区间内至少取 8 个点（不够时继续到 3.5 N）；
+   - 去掉开头“力几乎不随电流增加”的点（夹爪带速度碰上垫后被摩擦保持的力），再用两两斜率的中位数（Theil–Sen）拟合；
+   - 接受条件：拟合残差 ≤ 0.2 N、电流跨度 ≥ 3 级、(限位处 N·m/pu) ÷ k 得到的杠杆在名义杠杆的 0.6–1.4 倍之内。名义杠杆 `GRIP_LEVER_NOMINAL_M` 现为 10.4 mm（72 mm 开口 ÷ 6.9 rad 行程的平均值），应改为在接触附近实测的值。两块垫按同一比例读小时，算出的杠杆偏长，会被拒绝；
+   - 速度上限保持 0.05 rad/s，以限制卡滞后突然滑动时的冲击力；电流上限不超过起始电流加 0.2 N·m。再回退 0.05 rad，确认两块垫都低于 0.2 N，记为最小位置。
+5. 校验行程（与上次记录相差超过 15 % 时拒绝一次并清除记录，再次标定即接受）。限位、最大、最小、接触位置以及 k、垫刚度等全部写入 NVS。最后张开到最大位置。
 
-- `GRIP_HOME (0x41)`：回到 `pos_closed`。
-- `GRIP_SET_OPEN (0x42, f)`：`目标位 = pos_closed + f×(pos_open − pos_closed)`，`f∈[0,1]`。位置环（MIT 阻抗）跟踪，到位且静止即进入 IDLE 保持。
-- `GRIP_RELEASE (0x44)`：张到 `pos_open`。
-- `gripper_get_opening()` 反算当前开合度 0~1。
+轻压测 k 时，若静摩擦明显大于滑动摩擦，夹爪会先卡住再突然滑动，测点拟合不成直线。此时标定照常完成，k 改用电机参数估算（19.27 N·m/pu ÷ 名义杠杆 10.4 mm = 1852.8 N/pu），日志打印 “k not measured”。夹持力由触觉闭环决定，k 只用于计算电流上限。
 
-## 三、定力夹持（触觉力闭环）
+**原点检查（`0x41`）**：输出轴编码器是单圈绝对值，行程约 7.2 rad 超过一圈，上电后读数可能整体差 2π。原点检查在电机断电时把触觉清零，然后合拢到两垫接触（离保存的接触位置及其 ±2π 位置 0.25 rad 以内用 0.05 rad/s），与保存的接触位置比较：相差 ≤ 0.03 rad（或整圈 2π 加 ≤ 0.03 rad）则把全部位置按实测差值平移后恢复；相差更大则报错并保留保存的标定。约 40 s。
 
-`GRIP_GRIP (0x43, force_N)`：
+任一垫超过 4 N、合拢停住却没有触觉信号、行程超过 8.0 rad、超时（每阶段 240 s），都中止标定；与触觉有关的故障先朝张开方向后退 0.3 rad（不越过机械限位 0.02 rad 以内，张开阶段不越过本次寻位的起点），后退中触觉力再上升 0.5 N 就立即失能。
 
-1. **合拢找接触**：慢速合，同时读触觉板**合力（∑Fz）**；力超过接触阈值（或撞到刚性物体速度归零）→ 判定夹到东西。
-2. **切定力保持**：改用**力矩前馈**做恒力，并用触觉力做 **P 闭环**微调：
-   `t_ff += Kp_force × (目标力 − 实测触觉力)`（限幅 `[0, 3N·m]`），Kp=0、留小 Kd 阻尼。
-   → 实际夹持力被稳定在设定值，物体软硬不同也能自适应。
-3. `GRIP_SET_FORCE (0x45, N)` 设定并持久化默认夹持力；`GRIP_GRIP` 传 0 即用它。
+本夹爪的行程为 6.9 rad（输出轴 395°，台架实测：张开 −2.00 rad，两垫接触 +4.89 rad），超过一整圈。首次标定张开和合拢都用 0.05 rad/s，约 3–4 分钟；有保存记录后合拢只在接触位置前 0.25 rad 内慢速。输出轴编码器是单圈绝对值，行程超过一圈，因此上电时夹爪若在合拢一端，读数会整体差 2π；原点检查会识别并平移。
 
-## 四、状态机
+## 三、开合控制
 
-```
-UNCAL ──calibrate──▶ CAL_CLOSE ─撞限位─▶ CAL_OPEN ─撞限位─▶ IDLE(已标定, 存flash)
-IDLE ──set_open/home/release──▶ MOVING ─到位─▶ IDLE
-IDLE ──grip──▶ GRIPPING ─接触/卡住─▶ HOLDING(恒力) ──stop/release──▶ IDLE
-任意 ──stop──▶ IDLE(保持当前位)      SAFE_STOP 由 supervisor 兜底
-```
+`GRIP_SET_CLOSE`、`GRIP_MOVE_DEG` 只在标定完成后、在闭合 5 %–95 % 之间移动（两端各留 5 % 余量；标定和 `GRIP_HOME` 结束时也停在 5 %）。位置目标按 40 rad/s² 加速和减速，到达目标时速度为 0；速度可由命令给出，范围 0.05–15 rad/s（15 rad/s 时 5 %–95 % 的 6.6 rad 约 0.82 s，10 rad/s 时约 0.91 s，受 40 rad/s² 加速度限制），不给时为 2 rad/s；张开、合拢相同。电流上限不是固定值：起始值张开 1.0 N·m、合拢为起动电流 + 3 N / k；驱动器已达上限、夹爪落后于位置目标但仍在移动时，说明运动本身需要更大力矩（速度、加速度、局部摩擦），每 100 ms 把上限乘 1.25，张开最多到 3.0 N·m（电机额定 3.5 N·m），合拢最多到 1.0 N·m；已达上限且 300 ms 不动，判为被挡住，停在原地并报 “move blocked”。合拢途中触觉力上升超过起始值 0.5 N 且不低于 1 N 即停止。合拢时碰到物体的冲击力估算为每 1 rad/s 约 7.6 N：2 rad/s 约 15 N，5 rad/s 约 38 N，10 rad/s 约 76 N，15 rad/s 约 114 N（后两者超过触觉垫 50 N 安全负载）（假设转动惯量 0.002 kg·m²、垫刚度 300 N/rad，均未实测）。
+
+## 四、定力夹取（`GRIP_GRIP`）
+
+1. 夹爪比 80 % 开度更合拢时，先张开到 80 %；否则从当前位置直接合拢。合拢速度由命令给出（0.05–15 rad/s，不给时 2 rad/s），按 40 rad/s² 加速和减速，目标为 95 % 闭合位置。接近时电流上限 = 摩擦电流 + 2 N / k，只在运动本身需要时提高；已达上限且不动 300 ms 而触觉无力，判为物体在垫外，后退并报错。位置目标最多越过接触位置 0.10 rad。每次接触后 0.5 s 内的垫上最大力和接触时的速度写入日志（“grip contact: … peak …”），用于核对冲击力。
+2. 任一垫读到 0.3 N 进入力控。若此时位置距接触位置不到 0.03 rad，判定为空抓，退回最小位置。
+3. 力控取两块垫中较大的合力，分三区：低于目标带时推进并按积分增大电流；在目标带内保持当前位置；高于目标带时减小电流，并让位置目标以 0.02 rad/s 后退，克服摩擦主动卸载。目标带宽 = max(0.25 N, 4 % × 目标力)。电流上升速度限制为 8 N/s ÷ k；电流上限 = (2 × 目标力 + 3 N) / k，且不超过 25 N / k：k 用电机参数估算时可能偏大，这样即使 k 偏大一倍也能达到目标力；实际夹持力由触觉闭环决定。
+4. 推进且停住时，若触觉力低于 0.5 × k ×（电流 − 偏置）− 1 N 持续 300 ms，判定触觉读数偏低或物体压在垫外，后退并停止。
+5. 触觉数据中断时不再增加电流，只保持前馈电流；恢复后继续调节。中断超过 10 s 则结束力控，在当前位置以当时的电流保持物体，状态变为 IDLE、故障为“tactile stale while holding”，由上位机决定 `GRIP_SET_CLOSE 5`（张开）或重新 `GRIP_GRIP`。
+6. 接触丢失 100 ms 后回到慢速合拢。夹持中触觉被清零（计数变化）则后退。
+7. 物体被取走：150 ms 内力下降超过最近峰值的 20 %（且 ≥ 0.5 N）时开始 1 s 的观察。力高于目标带期间、离开目标带后 150 ms 内、以及改变目标力时，不计入下降判断（这些下降由控制器自己造成）。观察期内夹爪比开始观察时又合拢至少 0.01 rad，且到达接触位置前 0.03 rad 以内，才判定两垫之间已无物体，报“empty grasp”并退回最小位置。
+8. 发出 `GRIP_GRIP` 时若两垫已经受力（例如触觉中断 10 s 后仍夹着物体），直接从当前电流进入力控，不做首次接触的空抓判断。
+9. 过力后退后 2 s 内拒绝新的 `GRIP_GRIP`，以及朝合拢方向的 `GRIP_SET_OPEN` / `GRIP_MOVE_DEG`。
+10. 首次接触时，物体表面若在接触位置前 0.03 rad 以内（杠杆 20 mm 时约 0.6 mm），无法与两垫直接接触区分，按空抓处理。
+
+## 五、力和电流的保护层级
+
+| 层级 | 触发条件 | 反应 |
+| --- | --- | --- |
+| 驱动器 | 每帧命令的电流上限 | 驱动器硬件限流 |
+| 夹爪 | 合力超过目标 + max(1 N, 30 %) | 电流立即降到前馈的一半并卸载 |
+| 夹爪 | 触觉力低于电流对应值的 30 % | 只打印警告，继续调节 |
+| 夹爪 | 任一垫 ≥ 23 N，或任一测点 ≥ 6 N（连续 2 个读数） | 后退 0.3 rad 后保持（标定中则失能） |
+| supervisor | 电机使能时任一垫 ≥ 24 N | SAFE_STOP，失能电机，需 `0x15` 解除 |
+| motor_twai | 设定值 150 ms 未刷新 / 反馈 300 ms 中断 / 电机寄存器被改 | 失能电机 / 重新自检 |
+| 电机 | 300 ms 收不到命令 | 驱动器自行失能 |
+
+触觉传感器量程 0–25 N，安全负载 50 N（手册）。目标力上限 20 N。单个测点 6 N 的阈值是估计值，手册没有给出单点额定值。上位机的触觉清零（`0x34`）只在两块垫数据新鲜（200 ms 内）且都低于 0.5 N、夹爪未驱动电机时执行。
 
 ## 五、夹爪命令示例帧（含正确 CRC；均需先解锁）
 
 | 命令 | 帧（hex） |
 | --- | --- |
-| 自动标定 | `A5 5A 01 00 20 01 00 40 0A 03` |
-| 回零 | `A5 5A 01 00 21 01 00 41 9F 65` |
-| 开合到 50% | `A5 5A 01 00 22 05 00 42 00 00 00 3F 42 91` |
+| 完整标定 | `A5 5A 01 00 20 01 00 40 0A 03` |
+| 原点检查（恢复保存的标定） | `A5 5A 01 00 21 01 00 41 9F 65` |
+| 闭合到 50 %（参数 50.0） | 用 `host/3_gripper_cli.py close 50` 发送 |
 | 5N 定力夹持 | `A5 5A 01 00 23 05 00 43 00 00 A0 40 C6 EE` |
 | 张开释放 | `A5 5A 01 00 24 01 00 44 7F 89` |
 | 设默认力 8N | `A5 5A 01 00 25 05 00 45 00 00 00 41 D7 AE` |
 | 保持/停 | `A5 5A 01 00 26 01 00 46 55 44` |
 | 读标定 | `A5 5A 01 00 27 01 00 47 C0 22` |
 
-典型开机流程：`解锁 → GRIP_CALIBRATE（首次，之后开机自动读 flash）→ GRIP_SET_OPEN/GRIP → …`
+典型开机流程：`解锁 → GRIP_HOME（首次用 GRIP_CALIBRATE）→ GRIP_GRIP / GRIP_SET_CLOSE → …`
 
-## 六、其它模块可复用的高级抽象
+电机配置写入电机 flash（只需一次）：`A5 5A 01 00 28 01 00 17 DB AC`（`MOTOR_SAVE_CONFIG`，需先解锁）。
 
-已实现或已预留接口，便于继续往上叠：
-
-- **IMU**：`imu_uart_calibrate()`（加计/陀螺自校准）、`imu_uart_set_zero()`（偏航归零）已接入 `IMU_CALIBRATE/SET_ZERO`；可再加"水平检测/静止检测/敲击检测"（基于角度与角速度阈值）。
-- **触觉**：`haptic_total_force()` 合力求和、接触检测已用于夹持；可再加"打滑检测"（合力对时间的变化率）、"抓取质量评估"（多指力分布）。
-- **电机**：`motor_twai_set_mit()` 暴露完整 MIT（位置/速度/力矩），夹爪的位置环与力环都基于它；力矩即电流，用于撞限位与恒力。
-- **整机自校准** `SELF_CALIBRATE`：一键串联 IMU 自校准 + 触觉清零 + 电机位置置零。
+台架命令行工具 `host/3_gripper_cli.py`（需 pyserial，先关闭 idf.py monitor）：`watch` 在电机失能时显示位置和两块垫的力，用来手动确认 `CLOSE_DIR`；`calibrate`、`home`、`calib`、`close 50 [--speed v]`、`grip 3 [--speed v]`、`stop`、`disable`、`clear`、`save-motor-config`。命令运行中按 Ctrl+C 会立即发送 `MOTOR_DISABLE`。
 
 ## Protocols implemented
 
@@ -505,11 +529,11 @@ The real wire formats were decoded from `source_files/` and are now implemented
   frames (`0x55` + type + 4×int16-LE + 8-bit sum checksum). The sensor runs at
   100 Hz. Every 20 ms the supervisor batches all accumulated samples into one
   USB telemetry frame, normally producing 50 packets/s containing 100 samples/s.
-- **Motor (Damiao DM-J4310-2EC)** — TWAI CAN 2.0A @ 1 Mbps. Enable/disable
-  frames (`…FC` / `…FD`), MIT-mode command packing (position/velocity/Kp/Kd/
-  torque via the standard `float_to_uint` map over ±12.5 rad / ±30 rad·s⁻¹ /
-  ±10 N·m / Kp 0–500 / Kd 0–5), and feedback decoding (position/velocity/torque
-  + MOS/rotor temperature + error nibble).
+- **Motor (Damiao DM-J4310-2EC)** — TWAI CAN 2.0A @ 1 Mbps, force-position
+  mode only (`0x300+ID`: p_des float, v_des ×100, i_des ×10000). A start-up probe
+  reads PMAX/VMAX/TMAX, sets CTRL_MODE = 4 and a 300 ms comms-loss TIMEOUT, and
+  verifies both by reading back. Feedback decoding uses the ranges read from
+  the motor. While disabled, a disable frame every 50 ms keeps feedback alive.
 
 ## Current limitations
 
@@ -525,9 +549,10 @@ The real wire formats were decoded from `source_files/` and are now implemented
   powered session (not saved), then ACC/GYRO/ANGLE output at 100 Hz is applied
   without saving. A stopped stream is woken once and then re-detected at those
   same two rates. Yaw is intentionally not exposed.
-- **Motor**: uses factory default IDs (ESC_ID `0x001`, MST_ID `0x000`) and the
-  4310's default value ranges — confirm/adjust against your motor's registers.
-  A fixed impedance gain (Kp=5, Kd=1) holds position; no trajectory planning.
+- **Motor/gripper**: verified on the bench on 2026-10-23 (calibration, home check,
+  moves up to 15 rad/s, force grip on a sponge). Open items are listed in
+  [README_gripper.md](README_gripper.md) section 7. Uses factory IDs ESC_ID
+  `0x001`, MST_ID `0x000`.
 - **OLED**: initialises the SH1106 and pushes a framebuffer, but has no font, so
   it shows a heartbeat bar and logs the real values.
 - **Wi-Fi** is a logged no-op skeleton; **BLE** has no pairing/bonding/security.
@@ -540,8 +565,8 @@ Remaining gaps are marked with `TODO:` comments in the source.
    physical rotation/mirroring constants for the two mounted fingers.
 2. IMU: send the WitMotion config sequence at startup so the unit emits the
    desired packets/rate regardless of prior state.
-3. Motor: confirm ESC_ID/MST_ID and PMAX/VMAX/TMAX, then add closed-loop grip
-   control (target force/position from the supervisor).
+3. Motor: first powered run with the jaw empty; check the probe log, the
+   calibration log (measured speed, stall torque, k) and `CLOSE_DIR`.
 4. Add a 5×7 font + text renderer to `oled_sh1106`.
 5. Flesh out the supervisor safety policy (force limits, orientation limits,
    fault recovery out of `ERROR`/`SAFE_STOP`).

@@ -21,7 +21,10 @@ static app_proto_parser_t s_parser;   /* reassembly for the inbound byte stream 
 static void uart_sink(const uint8_t *frame, size_t len, void *ctx)
 {
     (void)ctx;
-    usb_serial_jtag_write_bytes(frame, len, pdMS_TO_TICKS(20));
+    /* Short timeout: the supervisor calls this from its 10 ms control loop,
+     * and a host that stops reading must not stretch that loop. A frame cut
+     * short is dropped by the host's CRC check. */
+    usb_serial_jtag_write_bytes(frame, len, pdMS_TO_TICKS(5));
 }
 
 /* decoded command -> supervisor queue */

@@ -8,3 +8,7 @@ dependencies.lock
 # Editor / OS
 *.swp
 .DS_Store
+
+# Bench logs and Python caches
+host/logs/
+__pycache__/
