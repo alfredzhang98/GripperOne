@@ -62,7 +62,7 @@ BLE_CTRL_UUID = "67700002-0000-0000-0000-676700001111"    # write: commands in
 BLE_TELEM_UUID = "67700003-0000-0000-0000-676700001111"   # notify: replies out
 OP_NAME = {v: k for k, v in OP.items()}
 STATUS = {0: "OK", 1: "ERR_CRC", 2: "ERR_VERSION", 3: "ERR_OPCODE", 4: "ERR_LOCKED", 5: "ERR_STATE", 6: "ERR_ARG"}
-# gripper_state_t / gripper_fault_t, mirrored from components/gripper/include/gripper.h
+# gripper_state_t / gripper_fault_t, mirrored from firmware/components/gripper/include/gripper.h
 GRIP_STATE = ["UNCAL", "IDLE", "CALIBRATING", "MOVING", "GRIPPING", "HOLDING", "ERROR"]
 GRIP_FAULT = [
     "none", "motor not ready", "motor lost", "motor fault", "motor not enabled", "tactile unavailable",

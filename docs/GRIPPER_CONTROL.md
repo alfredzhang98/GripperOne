@@ -1,6 +1,8 @@
+**中文** | [English](GRIPPER_CONTROL.en.md)
+
 # 夹爪电机控制说明
 
-本文说明夹爪电机控制的用法、当前台架实测结果、工作参数范围和电流计算方法。硬件接线、通信协议和传感器协议见 [README.md](README.md)。
+本文说明夹爪电机控制的用法、当前台架实测结果、工作参数范围和电流计算方法。硬件接线见 [../hardware/WIRING.md](../hardware/WIRING.md)，通信协议和传感器协议见 [PROTOCOL.md](PROTOCOL.md)。
 
 ## 1. 组成
 
@@ -9,7 +11,7 @@
 | 电机 | 达妙 DM-J4310-2EC（10:1 减速，24 V） | 驱动夹爪开合，工作在力位混合模式 |
 | 指尖触觉垫 | 帕西尼 CP-M3025 × 2（ring、little） | 测量夹持力，量程 0–25 N，安全负载 50 N，输出频率 83.3 Hz |
 | 主控 | XIAO ESP32-C6 | 通过 CAN（1 Mbit/s）控制电机，通过 UART 读取触觉 |
-| 控制程序 | `components/gripper/`、`components/motor_twai/` | 标定、开合、力控夹取、保护 |
+| 控制程序 | `firmware/components/gripper/`、`firmware/components/motor_twai/` | 标定、开合、力控夹取、保护 |
 | 上位机工具 | `host/3_gripper_cli.py` | 命令行控制和测试 |
 
 **力位混合模式：** 每一帧命令给驱动器三个量：目标位置、速度上限、电流上限。驱动器朝目标位置运动，但速度和电流都不超过上限。电流单位是 pu，1 pu 对应驱动器的最大电流。本电机 1 pu 对应输出轴 19.27 N·m（寄存器 Kt × Imax），命令分辨率 0.0001 pu，约 0.0019 N·m。
@@ -18,7 +20,7 @@
 
 ## 2. 命令行工具
 
-运行前先关闭 `idf.py monitor`，同一时间只能有一个程序打开串口。需要 pyserial；用蓝牙还需要 bleak。在命令前加 `--ble` 即通过蓝牙控制，连接方法见 [docs/USER_MANUAL.md](docs/USER_MANUAL.md)。
+运行前先关闭 `idf.py monitor`，同一时间只能有一个程序打开串口。需要 pyserial；用蓝牙还需要 bleak。在命令前加 `--ble` 即通过蓝牙控制，连接方法见 [USER_MANUAL.md](USER_MANUAL.md)。
 
 ```powershell
 python host/3_gripper_cli.py [--port COM6] <命令> [参数]

@@ -1,6 +1,6 @@
 # Physical position of each of the 77 measurement points, in millimetres,
 # from the vendor sheet "Finger pad 指腹 M3025 PX6AX-GEN3-CP-M3025-Core
-# PXSR-STDCP03B.xlsx" (kept in components/haptic_uart/ref/). Index order here
+# PXSR-STDCP03B.xlsx" (kept in firmware/components/haptic_uart/ref/). Index order here
 # is the wire order: point 1 is the first (Fx, Fy, Fz) triple in the block
 # read from the board, point 77 the last.
 #

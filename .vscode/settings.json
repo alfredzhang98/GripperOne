@@ -1,8 +1,8 @@
 {
-  "cmake.sourceDirectory": "${workspaceFolder}",
-  "cmake.buildDirectory": "${workspaceFolder}/build",
+  "cmake.sourceDirectory": "${workspaceFolder}/firmware",
+  "cmake.buildDirectory": "${workspaceFolder}/firmware/build",
   "cmake.configureOnOpen": false,
-  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/firmware/build/compile_commands.json",
   "files.associations": {
     "*.h": "c"
   },
@@ -11,7 +11,7 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=f:\\github\\gripper_Robotiq\\build"
+    "--compile-commands-dir=${workspaceFolder}/firmware/build"
   ],
   "idf.currentSetup": "F:\\esp\\v6.0.2\\esp-idf",
   "idf.flashType": "UART",

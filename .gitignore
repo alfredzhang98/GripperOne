@@ -1,5 +1,6 @@
 # ESP-IDF build artifacts
 /build/
+/firmware/build/
 sdkconfig
 sdkconfig.old
 managed_components/

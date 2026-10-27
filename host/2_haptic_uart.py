@@ -64,7 +64,7 @@ POINT_XY = [(x, y) for x, y, _z in POINT_XYZ_MM]
 # each finger as proximal/middle/fingertip/nail. A CP-M3025 is proximal.
 RING_MODULE = 12
 LITTLE_MODULE = 16
-# haptic_slot_status_t, mirrored from components/app_protocol/include/app_protocol.h
+# haptic_slot_status_t, mirrored from firmware/components/app_protocol/include/app_protocol.h
 def module_registers(module: int) -> dict:
     """Where one module's data lives on the board (通信盒协议 4.6)."""
     return {

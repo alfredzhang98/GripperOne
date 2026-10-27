@@ -1,6 +1,8 @@
+**中文** | [English](USER_MANUAL.en.md)
+
 # GripperPlus 夹爪使用手册
 
-本手册说明如何连接夹爪、完成首次准备，以及用命令控制开合和夹取。控制原理和参数见 [README_gripper.md](../README_gripper.md)。
+本手册说明如何连接夹爪、完成首次准备，以及用命令控制开合和夹取。控制原理和参数见 [GRIPPER_CONTROL.md](GRIPPER_CONTROL.md)。
 
 ## 1. 连接方式
 
@@ -77,8 +79,8 @@ python host/3_gripper_cli.py --ble --ble-name 58:E6:C5:14:05:42 calib
 
 **开启：**
 
-1. 把 `main/app_config.h` 里的 `APP_ENABLE_WIFI` 改为 1。
-2. 重新编译并烧录，然后运行 `home`。
+1. 把 `firmware/main/app_config.h` 里的 `APP_ENABLE_WIFI` 改为 1。
+2. 在 `firmware/` 目录里重新编译并烧录（`cd firmware`，再运行 `idf.py build flash`），然后运行 `home`。
 
 **使用夹爪自己的热点：**
 
@@ -209,7 +211,7 @@ python host/3_gripper_cli.py --ble close 50 --speed 15    # 最快速度移到 5
 
 ## 7. 编写自己的上位机
 
-三种连接方式传输同样的数据帧，格式和全部命令码见 [README.md](../README.md) 中"用户通信协议"一节。
+三种连接方式传输同样的数据帧，格式和全部命令码见 [PROTOCOL.md](PROTOCOL.md)。
 
 | 连接方式 | 发送命令 | 接收回复 |
 | --- | --- | --- |
