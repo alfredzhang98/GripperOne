@@ -2,6 +2,9 @@
 
 # gripper_plus
 
+<p align="center"><img src="docs/media/gripper_demo.gif" width="480" alt="Gripper open/close demo"></p>
+<p align="center">Open/close demo (<a href="docs/media/gripper_demo.mp4">MP4 with sound</a>)</p>
+
 This project builds on an open-source gripper and adds pressure (tactile) sensing and a complete wireless control circuit, to give the original gripper better sensing and easier control.
 
 ## Origin

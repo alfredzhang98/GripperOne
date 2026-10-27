@@ -2,6 +2,9 @@
 
 # gripper_plus
 
+<p align="center"><img src="docs/media/gripper_demo.gif" width="480" alt="夹爪开合演示"></p>
+<p align="center">开合演示（<a href="docs/media/gripper_demo.mp4">带声音的 MP4</a>）</p>
+
 这是一个基于开源夹爪工程进一步改造的项目，结合了压力传感器和完整无线控制电路，目标是在原有夹爪基础上提升感知能力与控制便利性。
 
 ## 项目来源
