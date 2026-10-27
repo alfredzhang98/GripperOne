@@ -11,7 +11,7 @@ FreeRTOS queues.
 
 ```
 firmware/
-├─ CMakeLists.txt            # top-level ESP-IDF project (gripper_plus)
+├─ CMakeLists.txt            # top-level ESP-IDF project (GripperOne)
 ├─ sdkconfig.defaults        # target esp32c6, NimBLE, USB-JTAG console
 ├─ main/
 │  ├─ app_main.c             # init + task startup (wiring only)
@@ -198,6 +198,6 @@ Remaining gaps are marked with `TODO:` comments in the source.
 ## Build verification status
 
 > ✅ **Verified.** Built successfully with **ESP-IDF v6.0** for `esp32c6`
-> (`idf.py set-target esp32c6 && idf.py build`) — `gripper_plus.bin` links with
+> (`idf.py set-target esp32c6 && idf.py build`) — `GripperOne.bin` links with
 > ~27% of the app partition free. Reproduce locally with the build commands
 > above after exporting ESP-IDF.

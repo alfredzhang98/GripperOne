@@ -22,7 +22,7 @@ extern "C" {
 #endif
 
 typedef struct {
-    const char *ap_ssid_prefix;   /* "GripperPlus" -> "GripperPlus-1A2B"        */
+    const char *ap_ssid_prefix;   /* "GripperOne" -> "GripperOne-1A2B"        */
     const char *ap_password;      /* WPA2, at least 8 characters                */
     uint8_t     ap_channel;       /* 1..13                                      */
     uint16_t    tcp_port;         /* app_proto server port                      */

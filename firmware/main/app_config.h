@@ -22,7 +22,7 @@
  * address 192.168.4.1. A home/lab network can be stored over USB
  * (OP_WIFI_SET_STA, CLI "wifi-set"); the same TCP port then also serves the
  * address that network gives the gripper. */
-#define WIFI_AP_SSID_PREFIX "GripperPlus"
+#define WIFI_AP_SSID_PREFIX "GripperOne"
 #define WIFI_AP_PASSWORD    "gripper123"   /* WPA2, at least 8 characters */
 #define WIFI_AP_CHANNEL     6
 #define WIFI_TCP_PORT       5000
@@ -108,7 +108,7 @@
 /* =========================================================================
  * BLE
  * ========================================================================= */
-#define BLE_DEVICE_NAME "GripperPlus"
+#define BLE_DEVICE_NAME "GripperOne"
 
 /* =========================================================================
  * Safety limits

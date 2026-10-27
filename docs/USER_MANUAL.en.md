@@ -1,6 +1,6 @@
 [中文](USER_MANUAL.md) | **English**
 
-# GripperPlus Gripper User Manual
+# GripperOne Gripper User Manual
 
 This manual explains how to connect the gripper, do the first-time setup, and control opening, closing and gripping with commands. For the control principles and parameters, see [GRIPPER_CONTROL.en.md](GRIPPER_CONTROL.en.md).
 
@@ -11,7 +11,7 @@ The gripper supports three connection types. All three use the same command set 
 | Type | Current firmware | Best for | Notes |
 | --- | --- | --- | --- |
 | USB | Enabled | Debugging, flashing, viewing logs | The only way to see the firmware log |
-| Bluetooth (BLE) | Enabled | Wireless control | Device name `GripperPlus`; only one computer can connect at a time |
+| Bluetooth (BLE) | Enabled | Wireless control | Device name `GripperOne`; only one computer can connect at a time |
 | Wi-Fi | Implemented, off by default | Longer range or joining a local network | See Section 3.3 to enable it |
 
 ## 2. Preparation
@@ -57,7 +57,7 @@ python host/3_gripper_cli.py --port COM6 calib
 python host/3_gripper_cli.py ble-scan
 ```
 
-The output looks like `58:E6:C5:14:05:42  GripperPlus`.
+The output looks like `58:E6:C5:14:05:42  GripperOne`.
 
 3. Add `--ble` before any command:
 
@@ -86,7 +86,7 @@ python host/3_gripper_cli.py --ble --ble-name 58:E6:C5:14:05:42 calib
 
 | Item | Value |
 | --- | --- |
-| Hotspot name | `GripperPlus-XXXX`, where XXXX is the last 4 digits of the MAC address; check it with `wifi-info` |
+| Hotspot name | `GripperOne-XXXX`, where XXXX is the last 4 digits of the MAC address; check it with `wifi-info` |
 | Password | `gripper123`; change it with `WIFI_AP_PASSWORD` in `app_config.h` |
 | Gripper address | `192.168.4.1`, TCP port 5000 |
 
@@ -137,7 +137,7 @@ The GUI labels are in Chinese; English glosses are given in parentheses below.
 1. In the top-right corner, choose the connection type: `USB`, `蓝牙` (Bluetooth) or `Wi-Fi`.
 2. Choose the target:
    - USB: pick a serial port; USB serial ports are listed first;
-   - Bluetooth: click `扫描` (Scan) and pick from the list, or just use the default name `GripperPlus`;
+   - Bluetooth: click `扫描` (Scan) and pick from the list, or just use the default name `GripperOne`;
    - Wi-Fi: enter the gripper's address.
 3. Click `连接` (Connect). The connection is unlocked automatically. The first Bluetooth connection takes 5–20 s.
 

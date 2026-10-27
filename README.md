@@ -1,11 +1,12 @@
 **中文** | [English](README.en.md)
 
-# gripper_plus
+# GripperOne
 
 <p align="center"><img src="docs/media/gripper_demo.gif" width="480" alt="夹爪开合演示"></p>
 <p align="center">开合演示（<a href="docs/media/gripper_demo.mp4">带声音的 MP4</a>）</p>
+<p align="center"><a href="https://huggingface.co/datasets/AlfredZhang98/robot-gripper-assets"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-robot--gripper--assets-FFD21E" alt="Hugging Face simulation assets"></a> <img src="https://img.shields.io/badge/Isaac%20Sim-OpenUSD%20%7C%20SimReady-76B900" alt="Isaac Sim"></p>
 
-这是一个基于开源夹爪工程进一步改造的项目，结合了压力传感器和完整无线控制电路，目标是在原有夹爪基础上提升感知能力与控制便利性。
+**GripperOne** 是一个基于开源夹爪工程进一步改造的项目，结合了压力传感器和完整无线控制电路，目标是在原有夹爪基础上提升感知能力与控制便利性。
 
 ## 项目来源
 
@@ -18,13 +19,13 @@
 - 集成帕西尼 CP-M3025 触觉指腹（两指），按触觉力闭环定力夹取
 - 集成完整无线控制电路：USB、蓝牙、Wi-Fi 三种连接使用同一套协议
 - 主控为 Seeed Studio XIAO ESP32-C6，固件基于原生 ESP-IDF
-- 约 **1500 元（约 220 美元）** 即可复刻一台，见 [BOM](hardware/bom/BOM.md)
+- 约 **3000 元（约 420 美元）** 即可复刻一台（其中帕西尼触觉传感器约 1500 元），见 [BOM](hardware/bom/BOM.md)
 - 提供 Isaac Sim 仿真资产（OpenUSD），见[仿真资产](#仿真资产isaac-sim)
 
 ## 仓库结构
 
 ```
-gripper_plus/
+GripperOne/
 ├─ hardware/                硬件
 │  ├─ bom/                  物料清单（BOM.md / BOM.xlsx / 样图）
 │  ├─ cad/                  SolidWorks 三维模型（Git LFS）

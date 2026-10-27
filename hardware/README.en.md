@@ -2,7 +2,7 @@
 
 # Hardware
 
-Total material cost is about **CNY 1500 (about USD 220)**. The full list with purchase links is in the [BOM](bom/BOM.en.md).
+Total material cost is about **CNY 3000 (about USD 420)**, of which the PaXini tactile sensors are about CNY 1500. The full list with purchase links is in the [BOM](bom/BOM.en.md).
 
 ## Layout
 
@@ -16,8 +16,8 @@ hardware/
 │  └─ img/              BOM images
 ├─ cad/                 SolidWorks 3D models (Git LFS)
 ├─ pcb/
-│  ├─ main.SchDoc       Main PCB schematic (Altium Designer)
-│  ├─ main2.PcbDoc      Main PCB layout (Altium Designer)
+│  ├─ gripper_control.SchDoc Main PCB schematic (Altium Designer)
+│  ├─ gripper_control.PcbDoc Main PCB layout (Altium Designer)
 │  └─ production.zip    Production files: Gerber, drill, pick-and-place, component list bom_electrical.xlsx
 └─ datasheets/
    ├─ motor_TWAI/       DAMIAO DM-J4310-2EC manual and performance curves
@@ -55,14 +55,18 @@ The model files are stored with Git LFS. Install Git LFS before cloning:
 
 ```bash
 git lfs install
-git clone https://github.com/alfredzhang98/gripper_Robotiq.git
+git clone https://github.com/alfredzhang98/GripperOne.git
 ```
 
 If you already cloned and the model files are only a few hundred bytes (LFS pointers), run `git lfs pull` inside the repository.
 
+## Simulation model
+
+Isaac Sim assets prepared from this CAD (OpenUSD, packaged per NVIDIA SimReady, with joints and PhysX / Newton physics) are published on Hugging Face: [AlfredZhang98/robot-gripper-assets](https://huggingface.co/datasets/AlfredZhang98/robot-gripper-assets); this gripper is `gripper_custom/` there. See the [root README](../README.en.md#simulation-assets-isaac-sim) for download instructions.
+
 ## Main PCB (`pcb/`)
 
-- Open `main.SchDoc` and `main2.PcbDoc` in Altium Designer.
+- Open `gripper_control.SchDoc` and `gripper_control.PcbDoc` in Altium Designer.
 - For fabrication, use the Gerber and drill files in `production.zip`; for assembly, `Pick Place for main2.txt` and `bom_electrical.xlsx`. The component list is also in the [PCB parts section of the BOM](bom/BOM.en.md#pcb-parts).
 - What each connector is for: [WIRING.en.md section 5](WIRING.en.md#5-main-pcb-connectors).
 

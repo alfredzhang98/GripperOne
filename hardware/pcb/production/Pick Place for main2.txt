@@ -1,0 +1,36 @@
+Altium Designer Pick and Place Locations
+C:\Users\alfred\Desktop\Pick Place for main2.txt
+
+========================================================================================================================
+File Design Information:
+
+Date:       26/10/26
+Time:       23:19
+Revision:   Not in VersionControl
+Variant:    No variations
+Units used: mil
+
+Designator    Comment        Layer       Footprint        Center-X(mil) Center-Y(mil) Rotation 
+R3            0(NC)          TopLayer    R_0603_L         -555.005      440.000       315      
+JP1           HDR-1X2        BottomLayer PH2.0-WI-2P      -587.839      -527.161      135      
+IC1           ME6211A33M3G-N BottomLayer SOT95P280X145-3N 930.000       295.000       270      
+C11           1uF            BottomLayer C0402_L          1050.000      160.001       270      
+C10           100nF          BottomLayer C0402_L          950.001       410.000       180      
+C9            10uF           BottomLayer C0402_L          950.001       452.500       180      
+C8            1uF            BottomLayer C0402_L          950.001       495.000       180      
+Sub3          can_twai       TopLayer    6pin_2.5_can     714.567       -166.339      90       
+Sub2          JY901x         TopLayer    JY901x           -0.090        133.671       0        
+Sub1          esp32_c6_xiao  TopLayer    esp32_c6_xiao    0.141         -646.258      270      
+R2            4.7k           TopLayer    R_0603_L         -565.003      -45.003       0        
+R1            4.7k           TopLayer    R_0603_L         -565.003      -160.003      0        
+P1            DC_module      BottomLayer xibang_24v_dc    0.000         295.276       270      
+OLED1         HDR-1X4        TopLayer    PH2.0-WS-4P      -900.369      0.000         90       
+"connect in1" HDR-1X4        TopLayer    MX_1.25-WS-4P    -727.408      708.107       225      
+Con2          xt30_2_2       TopLayer    xt30_2_2         738.952       -518.128      135      
+Con1          24v_input_pad  TopLayer    high_volt_input  0.000         866.142       90       
+C6            0.1uf          TopLayer    C_0603_L         -640.000      484.995       45       
+C5            0.1uf          TopLayer    C_0603_L         -479.997      259.997       90       
+C4            10uf           TopLayer    C_0603_L         -479.997      -880.003      90       
+C3            1uF            TopLayer    C_0603_L         324.409       540.000       0        
+C2            0.1uf          TopLayer    C_0603_L         324.997       604.997       0        
+C1            0.1uf          TopLayer    C_0603_L         -564.409      50.000        0        

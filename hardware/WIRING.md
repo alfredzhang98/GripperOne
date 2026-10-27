@@ -100,7 +100,7 @@ ESP32-C6 GPIO21 (TWAI RX) ◄── 收发器 RXD
 
 ## 5. 主控 PCB 接口
 
-PCB 工程在 [`pcb/`](pcb/)（Altium：`main.SchDoc`、`main2.PcbDoc`），生产文件（Gerber、钻孔、坐标、元件表）在 [`pcb/production.zip`](pcb/production.zip)。采购链接见 [BOM](bom/BOM.md)。
+PCB 工程在 [`pcb/`](pcb/)（Altium：`gripper_control.SchDoc`、`gripper_control.PcbDoc`），生产文件（Gerber、钻孔、坐标、元件表）在 [`pcb/production.zip`](pcb/production.zip)。采购链接见 [BOM](bom/BOM.md)。
 
 | 位号 | 封装 / 连接器 | 接到 | 说明 |
 | --- | --- | --- | --- |

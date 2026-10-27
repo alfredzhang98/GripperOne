@@ -1,0 +1,308 @@
+*************************************************************
+FileName = main2.GBR
+AutoAperture = True
+*************************************************************
+Generating : Bottom Pad Master
+      File : main2.GPB
+
+    Adding Layer      : Bottom Layer
+
+    Adding Layer      : Multi-Layer
+
+
+Used DCodes :
+    D44
+    D45
+    D46
+    D47
+    D48
+    D49
+    D52
+    D53
+    D54
+    D55
+*************************************************************
+
+*************************************************************
+Generating : Top Pad Master
+      File : main2.GPT
+
+    Adding Layer      : Top Layer
+
+    Adding Layer      : Multi-Layer
+
+
+Used DCodes :
+    D15
+    D16
+    D17
+    D18
+    D19
+    D20
+    D21
+    D22
+    D23
+    D24
+    D44
+    D45
+    D46
+    D47
+    D48
+    D49
+*************************************************************
+
+*************************************************************
+Generating : Top Overlay
+      File : main2.GTO
+
+    Adding Layer      : Top Overlay
+
+
+Used DCodes :
+    D10
+    D11
+    D12
+    D13
+    D14
+*************************************************************
+
+*************************************************************
+Generating : Top Solder
+      File : main2.GTS
+
+    Adding Layer      : Top Solder
+
+    Adding Layer      : Top Layer
+
+    Adding Layer      : Multi-Layer
+
+
+Used DCodes :
+    D25
+    D26
+    D27
+    D28
+    D29
+    D30
+    D31
+    D32
+    D33
+    D34
+    D35
+    D36
+    D37
+    D38
+    D39
+    D40
+*************************************************************
+
+*************************************************************
+Generating : Mechanical 13
+      File : main2.GM13
+
+    Adding Layer      : Mechanical 13
+
+
+Used DCodes :
+    D60
+*************************************************************
+
+*************************************************************
+Generating : Bottom Solder
+      File : main2.GBS
+
+    Adding Layer      : Bottom Solder
+
+    Adding Layer      : Bottom Layer
+
+    Adding Layer      : Multi-Layer
+
+
+Used DCodes :
+    D35
+    D36
+    D37
+    D38
+    D39
+    D40
+    D56
+    D57
+    D58
+    D59
+*************************************************************
+
+*************************************************************
+Generating : Mechanical 1
+      File : main2.GM1
+
+    Adding Layer      : Mechanical 1
+
+
+Used DCodes :
+    D10
+*************************************************************
+
+*************************************************************
+Generating : Bottom Overlay
+      File : main2.GBO
+
+    Adding Layer      : Bottom Overlay
+
+
+Used DCodes :
+    D10
+    D12
+    D13
+    D14
+*************************************************************
+
+*************************************************************
+Generating : Mechanical 15
+      File : main2.GM15
+
+    Adding Layer      : Mechanical 15
+
+
+Used DCodes :
+    D61
+    D62
+*************************************************************
+
+*************************************************************
+Generating : Bottom Layer
+      File : main2.GBL
+
+    Adding Layer      : Bottom Layer
+
+    Adding Layer      : Multi-Layer
+
+
+Used DCodes :
+    D41
+    D42
+    D43
+    D44
+    D45
+    D46
+    D47
+    D48
+    D49
+    D50
+    D51
+    D52
+    D53
+    D54
+    D55
+*************************************************************
+
+*************************************************************
+Generating : Top Layer
+      File : main2.GTL
+
+    Adding Layer      : Top Layer
+
+    Adding Layer      : Multi-Layer
+
+
+Used DCodes :
+    D15
+    D16
+    D17
+    D18
+    D19
+    D20
+    D21
+    D22
+    D23
+    D24
+    D41
+    D42
+    D43
+    D44
+    D45
+    D46
+    D47
+    D48
+    D49
+    D50
+    D51
+*************************************************************
+
+*************************************************************
+Generating : Top Paste
+      File : main2.GTP
+
+    Adding Layer      : Top Paste
+
+    Adding Layer      : Top Layer
+
+    Adding Layer      : Multi-Layer
+
+
+Used DCodes :
+    D15
+    D16
+    D17
+    D18
+    D19
+    D20
+    D21
+    D22
+    D23
+    D24
+*************************************************************
+
+*************************************************************
+Generating : Bottom Paste
+      File : main2.GBP
+
+    Adding Layer      : Bottom Paste
+
+    Adding Layer      : Bottom Layer
+
+    Adding Layer      : Multi-Layer
+
+
+Used DCodes :
+    D52
+    D53
+    D54
+    D55
+*************************************************************
+
+*************************************************************
+Generating : Drill Drawing
+      File : main2.GD1
+
+    Adding Drill Pair : Top Layer-Bottom Layer
+
+    Adding Layer      : Drill Drawing
+
+
+Used DCodes :
+    D63
+    D64
+*************************************************************
+
+*************************************************************
+Generating : Drill Guide
+      File : main2.GG1
+
+    Adding Drill Pair : Top Layer-Bottom Layer
+
+    Adding Layer      : Drill Guide
+
+
+Used DCodes :
+    D63
+*************************************************************
+
+*************************************************************
+Generating : Profile
+      File : main2.GM
+
+
+Used DCodes :
+    D65
+*************************************************************
+

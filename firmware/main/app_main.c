@@ -50,7 +50,7 @@ static app_bus_t s_bus;
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== gripper_plus firmware starting (IMU + haptic + gripper) ===");
+    ESP_LOGI(TAG, "=== GripperOne firmware starting (IMU + haptic + gripper) ===");
 
     ESP_ERROR_CHECK(board_init());
     ESP_ERROR_CHECK(app_bus_init(&s_bus));   /* must precede every start below */

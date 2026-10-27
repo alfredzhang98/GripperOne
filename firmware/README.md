@@ -8,7 +8,7 @@
 
 ```
 firmware/
-├─ CMakeLists.txt            # ESP-IDF 顶层工程（gripper_plus）
+├─ CMakeLists.txt            # ESP-IDF 顶层工程（GripperOne）
 ├─ sdkconfig.defaults        # 目标 esp32c6、NimBLE、USB-JTAG 控制台
 ├─ main/
 │  ├─ app_main.c             # 初始化与任务启动（只做组装）
@@ -128,4 +128,4 @@ BLE 运行在 NimBLE 主机任务中（`nimble_port_freertos_init`）。
 
 ## 编译验证状态
 
-> ✅ **已验证。** 使用 **ESP-IDF v6.0** 针对 `esp32c6` 编译通过（`idf.py set-target esp32c6 && idf.py build`），`gripper_plus.bin` 链接后应用分区剩余约 27%。导出 ESP-IDF 后，按上面的编译命令即可在本地复现。
+> ✅ **已验证。** 使用 **ESP-IDF v6.0** 针对 `esp32c6` 编译通过（`idf.py set-target esp32c6 && idf.py build`），`GripperOne.bin` 链接后应用分区剩余约 27%。导出 ESP-IDF 后，按上面的编译命令即可在本地复现。

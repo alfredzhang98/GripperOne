@@ -2,7 +2,7 @@
 
 # 硬件
 
-整机物料成本约 **1500 元（约 220 美元）**，完整清单和采购链接见 [BOM](bom/BOM.md)。
+整机物料成本约 **3000 元（约 420 美元）**，其中帕西尼触觉传感器约 1500 元，完整清单和采购链接见 [BOM](bom/BOM.md)。
 
 ## 目录
 
@@ -16,8 +16,8 @@ hardware/
 │  └─ img/              BOM 样图
 ├─ cad/                 SolidWorks 三维模型（Git LFS）
 ├─ pcb/
-│  ├─ main.SchDoc       主控 PCB 原理图（Altium Designer）
-│  ├─ main2.PcbDoc      主控 PCB 版图（Altium Designer）
+│  ├─ gripper_control.SchDoc 主控 PCB 原理图（Altium Designer）
+│  ├─ gripper_control.PcbDoc 主控 PCB 版图（Altium Designer）
 │  └─ production.zip    生产文件：Gerber、钻孔、坐标文件、元件表 bom_electrical.xlsx
 └─ datasheets/
    ├─ motor_TWAI/       达妙 DM-J4310-2EC 说明书和性能曲线
@@ -55,14 +55,18 @@ hardware/
 
 ```bash
 git lfs install
-git clone https://github.com/alfredzhang98/gripper_Robotiq.git
+git clone https://github.com/alfredzhang98/GripperOne.git
 ```
 
 已经克隆过、但模型文件只有几百字节（LFS 指针）时，在仓库里运行 `git lfs pull`。
 
+## 仿真模型
+
+由本 CAD 整理出的 Isaac Sim 仿真资产（OpenUSD，按 NVIDIA SimReady 规范打包，含关节和 PhysX / Newton 物理参数）发布在 Hugging Face：[AlfredZhang98/robot-gripper-assets](https://huggingface.co/datasets/AlfredZhang98/robot-gripper-assets)，本夹爪对应其中的 `gripper_custom/`。下载方法见[根目录 README](../README.md#仿真资产isaac-sim)。
+
 ## 主控 PCB（`pcb/`）
 
-- 用 Altium Designer 打开 `main.SchDoc` 和 `main2.PcbDoc`。
+- 用 Altium Designer 打开 `gripper_control.SchDoc` 和 `gripper_control.PcbDoc`。
 - 打板直接用 `production.zip` 里的 Gerber 和钻孔文件；贴片用 `Pick Place for main2.txt` 和 `bom_electrical.xlsx`。元件清单也列在 [BOM 的 PCB 元件一节](bom/BOM.md#pcb-元件)。
 - 各接口的用途见 [WIRING.md 第 5 节](WIRING.md#5-主控-pcb-接口)。
 

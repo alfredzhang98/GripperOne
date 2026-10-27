@@ -1,4 +1,4 @@
-# Default sdkconfig values for the gripper_plus firmware.
+# Default sdkconfig values for the GripperOne firmware.
 # These are applied on top of the per-target defaults when the build
 # directory is first generated. Adjust with `idf.py menuconfig`.
 

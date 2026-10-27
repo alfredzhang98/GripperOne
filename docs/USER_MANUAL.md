@@ -1,6 +1,6 @@
 **中文** | [English](USER_MANUAL.en.md)
 
-# GripperPlus 夹爪使用手册
+# GripperOne 夹爪使用手册
 
 本手册说明如何连接夹爪、完成首次准备，以及用命令控制开合和夹取。控制原理和参数见 [GRIPPER_CONTROL.md](GRIPPER_CONTROL.md)。
 
@@ -11,7 +11,7 @@
 | 方式 | 当前固件 | 适合 | 说明 |
 | --- | --- | --- | --- |
 | USB | 启用 | 调试、烧录、看日志 | 唯一能看到固件日志的方式 |
-| 蓝牙（BLE） | 启用 | 无线控制 | 设备名 `GripperPlus`，同一时间只能连一台电脑 |
+| 蓝牙（BLE） | 启用 | 无线控制 | 设备名 `GripperOne`，同一时间只能连一台电脑 |
 | Wi-Fi | 已实现，默认关闭 | 需要更远距离或接入局域网时 | 开启方法见第 3.3 节 |
 
 ## 2. 准备
@@ -57,7 +57,7 @@ python host/3_gripper_cli.py --port COM6 calib
 python host/3_gripper_cli.py ble-scan
 ```
 
-输出类似 `58:E6:C5:14:05:42  GripperPlus`。
+输出类似 `58:E6:C5:14:05:42  GripperOne`。
 
 3. 在任何命令前加 `--ble`：
 
@@ -86,7 +86,7 @@ python host/3_gripper_cli.py --ble --ble-name 58:E6:C5:14:05:42 calib
 
 | 项目 | 值 |
 | --- | --- |
-| 热点名称 | `GripperPlus-XXXX`，XXXX 是 MAC 地址的最后 4 位，可用 `wifi-info` 查看 |
+| 热点名称 | `GripperOne-XXXX`，XXXX 是 MAC 地址的最后 4 位，可用 `wifi-info` 查看 |
 | 密码 | `gripper123`，在 `app_config.h` 的 `WIFI_AP_PASSWORD` 修改 |
 | 夹爪地址 | `192.168.4.1`，TCP 端口 5000 |
 
@@ -135,7 +135,7 @@ python host/4_gripper_gui.py
 1. 在右上角选择连接方式：USB、蓝牙或 Wi-Fi。
 2. 选择目标：
    - USB：选串口，USB 串口排在最前；
-   - 蓝牙：点"扫描"后从列表里选，或直接用默认名 `GripperPlus`；
+   - 蓝牙：点"扫描"后从列表里选，或直接用默认名 `GripperOne`；
    - Wi-Fi：填夹爪的地址。
 3. 点"连接"。连接后会自动解锁。蓝牙第一次连接需要 5–20 s。
 

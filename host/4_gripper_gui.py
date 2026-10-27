@@ -259,7 +259,7 @@ def run_gui(render_path=None) -> int:
     class MainWindow(QMainWindow):
         def __init__(self):
             super().__init__()
-            self.setWindowTitle("GripperPlus 夹爪控制台")
+            self.setWindowTitle("GripperOne 夹爪控制台")
             self.resize(1180, 760)
             self.events = queue.Queue()
             self.worker = Worker(self.events)
@@ -276,7 +276,7 @@ def run_gui(render_path=None) -> int:
 
             # connection bar
             bar = QHBoxLayout()
-            title = QLabel("GripperPlus 夹爪控制台")
+            title = QLabel("GripperOne 夹爪控制台")
             title.setObjectName("title")
             bar.addWidget(title)
             bar.addStretch(1)
@@ -511,7 +511,7 @@ def run_gui(render_path=None) -> int:
                     self._append(f"  {ev[1]}: {ev[2]}{self._refusal_hint(ev[2])}")
                 elif kind == "scan":
                     self.target.clear()
-                    for line in ev[1] or ["未找到 GripperPlus"]:
+                    for line in ev[1] or ["未找到 GripperOne"]:
                         addr = line.split()[0]
                         self.target.addItem(line, addr if ":" in addr else cli.BLE_NAME)
                     self._append("扫描完成：%d 台" % len([x for x in ev[1] if ":" in x.split()[0]]))

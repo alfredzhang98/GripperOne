@@ -3,9 +3,9 @@
 
 Three links, the same commands on each:
     --port COM6                  USB serial (default). Also shows the firmware log.
-    --tcp 192.168.4.1[:5000]     Wi-Fi: join the gripper's access point "GripperPlus-XXXX"
+    --tcp 192.168.4.1[:5000]     Wi-Fi: join the gripper's access point "GripperOne-XXXX"
                                  (password gripper123), or use the address it got on a stored network.
-    --ble [--ble-name NAME|MAC]  Bluetooth LE, default name GripperPlus (needs: pip install bleak).
+    --ble [--ble-name NAME|MAC]  Bluetooth LE, default name GripperOne (needs: pip install bleak).
 The firmware log exists only on USB. Close idf.py monitor before using USB.
 
     python host/3_gripper_cli.py log                  # firmware log only
@@ -57,7 +57,7 @@ OP = {
     "SESSION_LOCK": 0x08, "WIFI_SET_STA": 0x09, "WIFI_GET_INFO": 0x0A,
 }
 TCP_PORT = 5000
-BLE_NAME = "GripperPlus"
+BLE_NAME = "GripperOne"
 BLE_CTRL_UUID = "67700002-0000-0000-0000-676700001111"    # write: commands in
 BLE_TELEM_UUID = "67700003-0000-0000-0000-676700001111"   # notify: replies out
 OP_NAME = {v: k for k, v in OP.items()}

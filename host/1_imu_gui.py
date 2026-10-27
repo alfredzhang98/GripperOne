@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySide6 dashboard for the gripper_plus IMU-only firmware.
+"""PySide6 dashboard for the GripperOne IMU-only firmware.
 
 The firmware acquires the IMU at 100 Hz and batches samples into app_proto
 telemetry packets on its 50 Hz supervisor tick. This program counts packet and
@@ -561,7 +561,7 @@ def run_gui() -> int:
 
         def __init__(self):
             super().__init__()
-            self.setWindowTitle("gripper_plus · IMU 100 Hz Inspector")
+            self.setWindowTitle("GripperOne · IMU 100 Hz Inspector")
             self.resize(1480, 940)
             self.output_queue = queue.Queue()
             self.link = SerialLink(self.output_queue)

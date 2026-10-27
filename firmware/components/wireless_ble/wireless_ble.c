@@ -31,7 +31,7 @@ static const ble_uuid128_t s_telem_uuid = BLE_UUID128_INIT(
     0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x70, 0x67);
 
 static const app_bus_t *s_bus = NULL;
-static const char      *s_device_name = "GripperPlus";
+static const char      *s_device_name = "GripperOne";
 static uint8_t          s_addr_type;
 static volatile uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;  /* written on host task, read on supervisor task */
 static uint16_t         s_telem_val_handle;

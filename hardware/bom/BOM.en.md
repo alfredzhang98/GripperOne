@@ -2,7 +2,7 @@
 
 # Bill of Materials (BOM)
 
-One gripper can be built for about **CNY 1500 (about USD 220)**. Excel version: [BOM.xlsx](BOM.xlsx); it matches this page, so update both together.
+One gripper can be built for about **CNY 3000 (about USD 420)**, of which the PaXini tactile sensors are about CNY 1500. Excel version: [BOM.xlsx](BOM.xlsx); it matches this page, so update both together.
 
  Lead screw and nut supplier: [Fanzhan Metal Products (繁展金属制品有限公司)](https://shop213748648.taobao.com) on Taobao.
 

@@ -100,7 +100,7 @@ ESP32-C6 GPIO21 (TWAI RX) ◄── transceiver RXD
 
 ## 5. Main PCB connectors
 
-The PCB project is in [`pcb/`](pcb/) (Altium: `main.SchDoc`, `main2.PcbDoc`); production files (Gerber, drill, pick-and-place, component list) are in [`pcb/production.zip`](pcb/production.zip). Purchase links are in the [BOM](bom/BOM.en.md).
+The PCB project is in [`pcb/`](pcb/) (Altium: `gripper_control.SchDoc`, `gripper_control.PcbDoc`); production files (Gerber, drill, pick-and-place, component list) are in [`pcb/production.zip`](pcb/production.zip). Purchase links are in the [BOM](bom/BOM.en.md).
 
 | Designator | Footprint / connector | Connects to | Notes |
 | --- | --- | --- | --- |

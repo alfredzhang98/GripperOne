@@ -1,11 +1,12 @@
 [中文](README.md) | **English**
 
-# gripper_plus
+# GripperOne
 
 <p align="center"><img src="docs/media/gripper_demo.gif" width="480" alt="Gripper open/close demo"></p>
 <p align="center">Open/close demo (<a href="docs/media/gripper_demo.mp4">MP4 with sound</a>)</p>
+<p align="center"><a href="https://huggingface.co/datasets/AlfredZhang98/robot-gripper-assets"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-robot--gripper--assets-FFD21E" alt="Hugging Face simulation assets"></a> <img src="https://img.shields.io/badge/Isaac%20Sim-OpenUSD%20%7C%20SimReady-76B900" alt="Isaac Sim"></p>
 
-This project builds on an open-source gripper and adds pressure (tactile) sensing and a complete wireless control circuit, to give the original gripper better sensing and easier control.
+**GripperOne** builds on an open-source gripper and adds pressure (tactile) sensing and a complete wireless control circuit, to give the original gripper better sensing and easier control.
 
 ## Origin
 
@@ -18,13 +19,13 @@ This project builds on an open-source gripper and adds pressure (tactile) sensin
 - Two PaXini CP-M3025 tactile finger pads, with closed-loop constant-force grasping on the tactile reading
 - Complete wireless control: USB, Bluetooth and Wi-Fi all carry the same protocol
 - Seeed Studio XIAO ESP32-C6 controller with native ESP-IDF firmware
-- One can be built for about **CNY 1500 (about USD 220)**; see the [BOM](hardware/bom/BOM.en.md)
+- One can be built for about **CNY 3000 (about USD 420)**, of which the PaXini tactile sensors are about CNY 1500; see the [BOM](hardware/bom/BOM.en.md)
 - Isaac Sim simulation assets (OpenUSD); see [Simulation assets](#simulation-assets-isaac-sim)
 
 ## Repository layout
 
 ```
-gripper_plus/
+GripperOne/
 ├─ hardware/                Hardware
 │  ├─ bom/                  Bill of materials (BOM.md / BOM.xlsx / images)
 │  ├─ cad/                  SolidWorks 3D models (Git LFS)
