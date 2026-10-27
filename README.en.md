@@ -17,6 +17,7 @@
 
 - Derived from an open-source gripper design
 - Two PaXini CP-M3025 tactile finger pads, with closed-loop constant-force grasping on the tactile reading
+- On-board WitMotion JY901P IMU: currently reports orientation (Euler angles / quaternion); planned for vibration and shake monitoring of the gripper
 - Complete wireless control: USB, Bluetooth and Wi-Fi all carry the same protocol
 - Seeed Studio XIAO ESP32-C6 controller with native ESP-IDF firmware
 - One can be built for about **CNY 3000 (about USD 420)**, of which the PaXini tactile sensors are about CNY 1500; see the [BOM](hardware/bom/BOM.en.md)
@@ -100,3 +101,11 @@ huggingface-cli download AlfredZhang98/robot-gripper-assets --repo-type dataset 
 ## Acknowledgements
 
 Thanks to 芝士榴莲肥牛 <https://github.com/wEch1ng> for their support.
+
+## Video
+
+Douyin: [Built a robotic gripper that can "feel" for 3,000 RMB 🦾](https://v.douyin.com/5bR7jXSu7sw/)
+
+## License
+
+This project is derived from [RhinoV2.0_Gripper](https://github.com/Ragtime-LAB/RhinoV2.0_Gripper) and is released under the same [GNU General Public License v3.0](LICENSE).

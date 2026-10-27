@@ -17,6 +17,7 @@
 
 - 基于开源夹爪工程进行二次开发
 - 集成帕西尼 CP-M3025 触觉指腹（两指），按触觉力闭环定力夹取
+- 板载维特 JY901P IMU：目前可读取姿态（欧拉角/四元数），后续用于夹爪的振动、抖动监测
 - 集成完整无线控制电路：USB、蓝牙、Wi-Fi 三种连接使用同一套协议
 - 主控为 Seeed Studio XIAO ESP32-C6，固件基于原生 ESP-IDF
 - 约 **3000 元（约 420 美元）** 即可复刻一台（其中帕西尼触觉传感器约 1500 元），见 [BOM](hardware/bom/BOM.md)
@@ -100,3 +101,11 @@ huggingface-cli download AlfredZhang98/robot-gripper-assets --repo-type dataset 
 ## 致谢
 
 感谢芝士榴莲肥牛 <https://github.com/wEch1ng> 的支持。
+
+## 宣传视频
+
+抖音：[花3000块造了个会“摸”的机械夹爪🦾](https://v.douyin.com/5bR7jXSu7sw/)
+
+## 许可证
+
+本项目基于 [RhinoV2.0_Gripper](https://github.com/Ragtime-LAB/RhinoV2.0_Gripper) 二次开发，沿用其 [GNU General Public License v3.0](LICENSE) 许可证发布。

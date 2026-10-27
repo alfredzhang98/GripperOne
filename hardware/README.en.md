@@ -35,7 +35,7 @@ hardware/
 | Controller | Seeed Studio XIAO ESP32-C6 | Plugs into the main PCB |
 | Main PCB | Custom 2-layer board (`pcb/`) | 24 V input, 24 V→5 V DC-DC, 3.3 V LDO, CAN transceiver module, IMU, connectors |
 | Tactile | PaXini PX6AX-GEN3-CP-M3025-Core × 2 + PX-6AX GEN3 high-speed communication board | Finger pads on both fingers, connected to the controller through the board's UART at 921600 |
-| IMU | WitMotion JY901P | Soldered on the main PCB (Sub2) |
+| IMU | WitMotion JY901P | Soldered on the main PCB (Sub2); currently reports orientation, planned for vibration and shake monitoring |
 | Display (optional) | 1.3 inch SH1106 OLED | PH2.0 4P header on the PCB; not driven by the current firmware |
 
 ## 3D models (`cad/`)

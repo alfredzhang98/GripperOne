@@ -35,7 +35,7 @@ hardware/
 | 主控 | Seeed Studio XIAO ESP32-C6 | 插在主控 PCB 上 |
 | 主控 PCB | 自制双层板（`pcb/`） | 24 V 输入、24 V→5 V DC-DC、3.3 V LDO、CAN 收发器模块、IMU、各接口 |
 | 触觉 | 帕西尼 PX6AX-GEN3-CP-M3025-Core × 2 + PX-6AX GEN3 高速通信集成板 | 两指指腹，经集成板 UART 921600 接主控 |
-| IMU | 维特智能 JY901P | 焊在主控 PCB 上（Sub2） |
+| IMU | 维特智能 JY901P | 焊在主控 PCB 上（Sub2）；目前输出姿态，后续用于振动、抖动监测 |
 | 显示屏（可选） | 1.3 inch SH1106 OLED | PCB 预留 PH2.0 4P 接口，当前固件未驱动 |
 
 ## 三维模型（`cad/`）
