@@ -121,6 +121,7 @@ python host/3_gripper_cli.py wifi-info
 - While either command runs, the space between the two tactile pads must be empty.
 - If `home` touches something along the way, it reports an error; remove the object and run it again. The stored calibration is not lost.
 - All open/close and grip commands are available only after `calibrate` or `home` has completed.
+- If `calibrate` or `home` has already completed since the motor was last powered on, `home` does not check again: it only moves the gripper to 5 % closing, and the existing calibration stays valid.
 
 ## 5. Control
 
@@ -144,12 +145,12 @@ The GUI labels are in Chinese; English glosses are given in parentheses below.
 **Left-hand buttons:**
 
 - `原点检查 home` (home check) and `完整标定` (full calibration);
-- Open/close: closing percentage and speed, plus three shortcut buttons `张开 5 %` (open 5 %), `50 %` and `合拢 95 %` (close 95 %);
+- Open/close: closing percentage and speed, plus three shortcut buttons `张开 5 %` (open 5 %), `50 %` and `合拢 95 %` (close 95 %). The gripper follows the slider while it is dragged; a value typed into the box runs only after `移动到设定值` (Move to setpoint). A closing move stops when it touches something; use the grip command to hold an object;
 - Force-controlled grip: grip force and approach speed;
 - `停止` (Stop) and `清除故障` (Clear fault);
 - `电机断电（Esc）` (Motor off); you can also press Esc.
 
-**Right-hand data (refreshed 5 times per second):**
+**Right-hand data (pushed by the firmware: 30 times per second over Bluetooth, 50 times per second over USB and Wi-Fi; older firmware without the push is polled instead, at most 20 times per second. The first log line after connecting states which applies):**
 
 - Status and latest fault, position and closing percentage, target force;
 - Force on the two pads, ring and little;

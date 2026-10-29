@@ -54,6 +54,14 @@ static const char *TAG = "supervisor";
                                       * the pads 7 rad apart (bench 2026-10-23) */
 #define TARE_LOADED_N         0.5f   /* refuse a tare while a pad reads more */
 #define TARE_FRESH_MS         200    /* ... and unless both pads are this fresh */
+/* Gripper telemetry (GRIP_STREAM_EN): a display rate, decimated from this
+ * loop; the control step itself always uses every sample. */
+#define GRIP_TELE_HZ_DEFAULT  30
+#define GRIP_TELE_HZ_MAX      (1000 / LOOP_PERIOD_MS)
+#define GRIP_TELE_IDLE_MS     3000   /* no command on a transport this long:
+                                      * its stream stops (USB has no close
+                                      * event, and each unread USB frame can
+                                      * cost this loop a 5 ms write timeout) */
 
 /* Console echo of the decoded sample: print one in every N, 0 = silent. */
 #ifndef IMU_PRINT_EVERY_N
@@ -80,6 +88,10 @@ static uint8_t    s_over_n[HAPTIC_SENSOR_COUNT];   /* see OVERFORCE_SAMPLES */
 /* streaming state (the "user layer" runtime) */
 static uint8_t s_stream_imu = 0;      /* APP_TR_BIT per transport that enabled it */
 static uint8_t s_stream_haptic = 0;
+static uint8_t  s_stream_grip = 0;
+static uint32_t s_grip_period_ms[APP_TR_COUNT];
+static uint32_t s_grip_next_ms[APP_TR_COUNT];
+static uint32_t s_last_cmd_ms[APP_TR_COUNT];   /* keeps that transport's stream alive */
 static bool s_powon_output = false;
 static TickType_t s_last_imu_tick = 0;
 static TickType_t s_last_haptic_tick[HAPTIC_SENSOR_COUNT];
@@ -156,6 +168,12 @@ static bool haptic_data_fresh(uint8_t sensor_index)
 static bool both_haptic_fresh(void)
 {
     return haptic_data_fresh(0) && haptic_data_fresh(1);
+}
+
+/* esp_timer in ms: the clock of the tactile receive stamps. */
+static uint32_t ms_now(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
 /* Age of a tactile sample from its own receive stamp (esp_timer ms), so a
@@ -266,6 +284,78 @@ static void emit_grip_calib(uint8_t seq)
     if (n) app_proto_emit_to(s_reply_tr, f, n);
 }
 
+/* Gripper telemetry (TELEMETRY, op GRIP_STREAM_EN), little-endian, 48 bytes:
+ *   op u8, gripper state u8, last fault u8, flags u8 (bit0 calibrated,
+ *   bit1 motor enabled, bit2 motor feedback fresh, bit3 ring pad fresh,
+ *   bit4 little pad fresh - "fresh" as the gripper control judges it),
+ *   motor error code u8, 3 reserved bytes, t_ms u32 (esp_timer, the clock of
+ *   the tactile stamps), then 9 x f32: position (rad), opening (0..1, -1 =
+ *   n/a), force target (N), ring Fz (N), little Fz (N), motor torque (N*m),
+ *   velocity (rad/s), MOSFET and rotor temperature (degC).
+ * About 57 bytes framed: 30 Hz is 1.7 kB/s. The 77-point tactile arrays stay
+ * on HAPTIC_STREAM_EN. */
+static void emit_grip_tele(uint8_t mask)
+{
+    gripper_calib_t cal;
+    gripper_status_t st;
+    gripper_get_calib(&cal);
+    gripper_get_status(&st);
+    const uint32_t now = ms_now();
+    const uint32_t tick_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    uint8_t flags = 0;
+    if (cal.valid) flags |= 0x01;
+    if (s_have_motor && s_last_motor.enabled) flags |= 0x02;
+    if (s_have_motor && tick_ms - s_last_motor.t_ms <= GRIP_MOTOR_FRESH_MS) flags |= 0x04;
+    for (uint8_t i = 0; i < HAPTIC_SENSOR_COUNT && i < 2; i++) {
+        if (s_have_haptic[i] && haptic_sample_age_ms(i) <= GRIP_TACTILE_FRESH_MS &&
+            s_last_haptic[i].status == HAPTIC_SLOT_OK) {
+            flags |= (uint8_t)(0x08u << i);
+        }
+    }
+    const float v[9] = {
+        st.pos, st.opening, st.force_target,
+        s_last_haptic[0].resultant[2], s_last_haptic[1].resultant[2],
+        s_last_motor.torque, s_last_motor.velocity, s_last_motor.t_mos, s_last_motor.t_rotor,
+    };
+    uint8_t pl[8 + 4 + sizeof(v)];
+    pl[0] = OP_GRIP_STREAM_EN;
+    pl[1] = (uint8_t)st.state;
+    pl[2] = (uint8_t)st.fault;
+    pl[3] = flags;
+    pl[4] = s_last_motor.error_code;
+    pl[5] = pl[6] = pl[7] = 0;
+    memcpy(&pl[8], &now, 4);           /* ESP32-C6 is little-endian */
+    memcpy(&pl[12], v, sizeof(v));
+    uint8_t f[APP_PROTO_HDR_LEN + sizeof(pl) + 2];
+    size_t n = app_proto_build(f, sizeof(f), APP_PROTO_T_TELEMETRY, 0, pl, (uint16_t)sizeof(pl));
+    if (n) app_proto_emit_mask(mask, f, n);
+}
+
+/* One pass of the gripper streams: each transport at its own rate. */
+static void grip_tele_tick(void)
+{
+    const uint32_t now = ms_now();
+    uint8_t due = 0;
+    for (uint8_t tr = 0; tr < APP_TR_COUNT; tr++) {
+        const uint8_t bit = APP_TR_BIT(tr);
+        if (!(s_stream_grip & bit)) continue;
+        if (now - s_last_cmd_ms[tr] > GRIP_TELE_IDLE_MS) {
+            s_stream_grip &= (uint8_t)~bit;
+            ESP_LOGW(TAG, "gripper telemetry stopped on transport %u: no command for %d ms",
+                     (unsigned)tr, GRIP_TELE_IDLE_MS);
+            continue;
+        }
+        if ((int32_t)(now - s_grip_next_ms[tr]) >= 0) {
+            due |= bit;
+            s_grip_next_ms[tr] += s_grip_period_ms[tr];
+            if ((int32_t)(now - s_grip_next_ms[tr]) >= 0) {
+                s_grip_next_ms[tr] = now + s_grip_period_ms[tr];   /* fell behind: no burst */
+            }
+        }
+    }
+    if (due) emit_grip_tele(due);
+}
+
 /* OP_WIFI_GET_INFO response, little-endian:
  *   op u8, started u8, station state u8 (0 none, 1 connecting, 2 connected),
  *   client connected u8, AP ip u32, station ip u32, client ip u32,
@@ -334,6 +424,7 @@ static void handle_cmd(const app_cmd_t *c)
         s_unlock_mask &= (uint8_t)~APP_TR_BIT(s_reply_tr);
         s_stream_imu &= (uint8_t)~APP_TR_BIT(s_reply_tr);
         s_stream_haptic &= (uint8_t)~APP_TR_BIT(s_reply_tr);
+        s_stream_grip &= (uint8_t)~APP_TR_BIT(s_reply_tr);
         gripper_status_t st;
         gripper_get_status(&st);
         if (st.state == GRIPPER_MOVING) {
@@ -343,6 +434,7 @@ static void handle_cmd(const app_cmd_t *c)
                  st.state == GRIPPER_MOVING ? ", move stopped" : "");
         return;
     }
+    s_last_cmd_ms[s_reply_tr] = ms_now();   /* any command keeps its gripper stream alive */
     if (needs_unlock(c->op) && !(s_unlock_mask & APP_TR_BIT(s_reply_tr))) {
         ESP_LOGW(TAG, "op 0x%02x rejected: session locked", c->op);
         reply_ack(c->seq, c->op, APP_PROTO_ERR_LOCKED);
@@ -593,7 +685,7 @@ static void handle_cmd(const app_cmd_t *c)
     case OP_GRIP_CALIBRATE:  /* full calibration, overwrites the stored one */
         reply_ack(c->seq, c->op, gripper_calibrate() ? APP_PROTO_OK : APP_PROTO_ERR_STATE);
         break;
-    case OP_GRIP_HOME:       /* open-stop check + stored calibration (full one if none) */
+    case OP_GRIP_HOME:       /* pad-touch check + stored calibration (full one if none) */
         reply_ack(c->seq, c->op, gripper_home() ? APP_PROTO_OK : APP_PROTO_ERR_STATE);
         break;
     case OP_GRIP_SET_CLOSE:
@@ -614,6 +706,21 @@ static void handle_cmd(const app_cmd_t *c)
         break;
     case OP_GRIP_MOVE_DEG:
         reply_ack(c->seq, c->op, gripper_move_deg(c->f0, c->f1) ? APP_PROTO_OK : APP_PROTO_ERR_STATE);
+        break;
+    case OP_GRIP_STREAM_EN: {
+        uint32_t hz = c->u0 ? c->u0 : GRIP_TELE_HZ_DEFAULT;
+        if (hz > GRIP_TELE_HZ_MAX) hz = GRIP_TELE_HZ_MAX;
+        s_grip_period_ms[s_reply_tr] = 1000u / hz;
+        s_grip_next_ms[s_reply_tr] = ms_now();
+        s_stream_grip |= APP_TR_BIT(s_reply_tr);
+        ESP_LOGI(TAG, "gripper telemetry %u Hz on transport %u", (unsigned)hz, (unsigned)s_reply_tr);
+        reply_ack(c->seq, c->op, APP_PROTO_OK);
+        break;
+    }
+    case OP_GRIP_STREAM_DIS:
+        s_stream_grip &= (uint8_t)~APP_TR_BIT(s_reply_tr);
+        ESP_LOGI(TAG, "gripper telemetry stopped on transport %u", (unsigned)s_reply_tr);
+        reply_ack(c->seq, c->op, APP_PROTO_OK);
         break;
 
     default:
@@ -792,6 +899,9 @@ static void supervisor_task(void *arg)
         build_gripper_input(&gin, dt_ms);
         gripper_tick(&gin);
 
+        /* Gripper telemetry after the control step, so reporting never delays it. */
+        if (s_stream_grip) grip_tele_tick();
+
         /* Liveness: fault only on an IMU that was seen alive and then went
          * quiet — never on one that has never streamed. Reported only. */
         bool calibrating = imu_uart_is_calibrating();
@@ -842,6 +952,7 @@ int app_supervisor_start(const app_bus_t *bus, const app_supervisor_cfg_t *cfg)
     s_bus = bus;
     s_stream_imu = 0;      /* telemetry is opt-in after every ESP32 boot */
     s_stream_haptic = 0;
+    s_stream_grip = 0;
     s_unlock_mask = 0;
     s_have_imu = false;
     memset(s_have_haptic, 0, sizeof(s_have_haptic));

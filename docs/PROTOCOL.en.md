@@ -53,7 +53,7 @@ When a host (phone / PC) controls the gripper over **BLE or Wi-Fi**, it **does n
 | `0x02` | GET_VERSION | none | no | Query protocol version + firmware version; replies RESPONSE |
 | `0x03` | GET_STATE | none | no | Query the state-machine state; replies RESPONSE |
 | `0x04` | SELF_CALIBRATE | none | **yes** | Same as `GRIP_CALIBRATE` (gripper calibration, including tactile zeroing). IMU calibration needs the unit still and level; use `0x23` separately |
-| `0x05` | SET_TELEM_RATE | u16 Hz | no | Set the telemetry report rate (default 20 Hz; limited by the 50 Hz control loop, values above are clamped to 50 Hz) |
+| `0x05` | (retired) | — | — | Formerly SET_TELEM_RATE. The firmware no longer handles it and replies `ERR_OPCODE`. Use `0x28` for the IMU output rate and the argument of `0x49` for the gripper report rate |
 | `0x06` | SAFE_STOP | none | no (safety command, always allowed) | Immediately cut motor power and enter SAFE_STOP |
 | `0x07` | SESSION_UNLOCK | u32 key | no | Session unlock; key = `0x47521000`, unlocks only if correct. Each connection (USB, Bluetooth, Wi-Fi) is unlocked separately, and the unlock expires when that connection drops |
 | `0x08` | SESSION_LOCK | none | no | Lock again (locks only the connection that sent this command) |
@@ -105,13 +105,15 @@ The motor is driven only by the gripper layer (`firmware/components/gripper/`) i
 | Opcode | Name | Arguments | Description |
 | --- | --- | --- | --- |
 | `0x40` | GRIP_CALIBRATE | none | Full calibration: open to the mechanical limit (detected by current) and back off, zero the tactile pads, close until the two tactile pads touch and back off; the result is written to the ESP32 NVS, replacing the old record |
-| `0x41` | GRIP_HOME | none | Home check: zero the tactile pads, close slowly until the two pads touch, and compare with the contact position saved in NVS. If the difference is ≤ 0.03 rad (or a full turn 2π plus ≤ 0.03 rad), shift and restore the saved calibration and stop at 5 % closed; if the difference is larger, report an error and keep the saved calibration (most likely something is between the pads). Without a saved calibration, run a full calibration |
+| `0x41` | GRIP_HOME | none | Home check: zero the tactile pads, close slowly until the two pads touch, and compare with the contact position saved in NVS. If the difference is ≤ 0.03 rad (or a full turn 2π plus ≤ 0.03 rad), shift and restore the saved calibration and stop at 5 % closed; if the difference is larger, report an error and keep the saved calibration (most likely something is between the pads). Without a saved calibration, run a full calibration. If a calibration or home check has already completed since the motor was powered on, no check is made: the gripper only moves to 5 % closed and the current calibration stays valid |
 | `0x42` | GRIP_SET_CLOSE | f32 [, f32] | Closing percent 5–95 (0 = calibrated maximum position, 100 = minimum position, with a 5 % margin at each end; out-of-range values move to the nearer end); optional second number is the speed (output shaft rad/s, 0.05–15; omitted or 0 means 2). Use 5 to open |
 | `0x43` | GRIP_GRIP | f32 [, f32] | Constant-force grip; the argument is the target grip force (N), ≤ 0 means use the default force; range 0.5–20 N. Optional second number is the approach speed (rad/s, 0.05–15; omitted or 0 means 2). If the gripper is more closed than 80 % opening it first opens to 80 %, otherwise it closes directly from the current position; if there is still no tactile force at 95 % closed it reports "empty grasp" (no object detected) and returns to 80 % opening; once an object is detected it holds it under closed-loop force control, with the position adapting to the object; if the object is removed it also returns to 80 % opening |
 | `0x45` | GRIP_SET_FORCE | f32 | Set and save the default grip force (N), range 0.5–20 N |
 | `0x46` | GRIP_STOP | none | Hold the current position (no unlock needed) |
 | `0x47` | GRIP_GET_CALIB | none | Replies RESPONSE: valid flag, gripper state, last fault code + 10 f32 (min/max/contact position rad, k N/pu, bias current pu, move current pu, default force N, current position rad, opening, target force N) |
 | `0x48` | GRIP_MOVE_DEG | f32 angle, f32 speed | Output-shaft angle (°) relative to the minimum position, and speed (°/s) |
+| `0x49` | GRIP_STREAM_EN | optional u16 rate in Hz (1–100; 0 or absent = 30) | Starts the gripper report stream (format in section 4) on the link that sent the command; no unlock needed. It stops on `0x4A`, when the link closes, or when the link sends no command for 3 s (USB has no close event, so the host must send a command at least every 3 s, for example `GRIP_GET_CALIB`). Each report is sent after the force-control step; the rate affects only reporting, not control, which runs every 10 ms on every 80 Hz tactile sample |
+| `0x4A` | GRIP_STREAM_DIS | none | Stops the gripper report stream on this link |
 
 ### 3. Telemetry must be enabled explicitly
 
@@ -128,6 +130,7 @@ The tactile path likewise separates "CP-M3025 → ESP32 polling" from "ESP32 →
 | IMU (op `0x22`) | `op` + `yaw` + `pitch` + `roll` + `q0 q1 q2 q3` (7 floats total; units: degrees / unit quaternion) |
 | Tactile (op `0x32`) | One module per frame: `op,index,address,status,point_count` + `seq(u32),timestamp_ms(u32)` + resultant `Fx,Fy,Fz` (3×f32) + 77×(`Fx:i8,Fy:i8,Fz:u8`); point values 0.1 N/LSB |
 | Motor (op `0x16`) | `op` + `enabled(u8)` + `position` + `velocity` + `torque` (3 floats) + `error code(u8)` |
+| Gripper (op `0x49`, 48 bytes) | `op`, gripper state, last fault, flags, motor error code (u8 each) + 3 reserved bytes + `t_ms(u32)` (same clock as the tactile timestamps) + 9 floats: position rad, opening (0–1, −1 = not calibrated), target force N, ring resultant Fz N, little resultant Fz N, motor torque N·m, velocity rad/s, MOSFET temperature °C, rotor temperature °C. Flags: bit0 calibrated, bit1 motor enabled, bit2 motor feedback fresh (within 120 ms), bit3 ring fresh, bit4 little fresh (within 60 ms with status OK, the same test the force control uses). No point arrays; about 1.7 kB/s at 30 Hz |
 
 ### 5. ACK / error codes (ACK and ERROR PAYLOAD = `echoed opcode` + `status code`)
 
@@ -163,7 +166,7 @@ Host → device (COMMAND):
 | Start IMU stream | `A5 5A 01 00 07 01 00 20 CF 09` |
 | Start tactile stream | `A5 5A 01 00 08 01 00 30 10 CF` |
 | Whole-device self-calibration | `A5 5A 01 00 09 01 00 04 73 CF` |
-| Set telemetry to 50 Hz | `A5 5A 01 00 0A 03 00 05 32 00 3A 96` |
+| Start the gripper stream at 30 Hz | `A5 5A 01 00 0A 03 00 49 1E 00 7D BD` |
 | Safe stop | `A5 5A 01 00 0B 01 00 06 59 02` |
 
 Device → host (ACK examples):

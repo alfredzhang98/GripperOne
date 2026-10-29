@@ -1,0 +1,11 @@
+{
+    "idf.currentSetup": "F:\\esp\\v6.0.2\\esp-idf",
+    "idf.flashType": "UART",
+    "idf.port": "COM6",
+    "clangd.path": "F:\\Espressif\\tools\\esp-clang\\esp-20.1.1_20250829\\esp-clang\\bin\\clangd.exe",
+    "clangd.arguments": [
+      "--background-index",
+      "--query-driver=**",
+      "--compile-commands-dir=f:\\github\\GripperOne\\firmware\\build"
+    ]
+}

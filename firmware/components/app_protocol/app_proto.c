@@ -205,6 +205,7 @@ static void decode_args(app_cmd_t *cmd, const uint8_t *pl, uint16_t plen)
         break;
     case OP_IMU_POWON_SET:
     case OP_IMU_SET_RATE:
+    case OP_GRIP_STREAM_EN:   /* rate optional */
         if (plen >= 1 + 2) cmd->u0 = get_u16(&pl[1]);
         break;
     case OP_WIFI_SET_STA: {

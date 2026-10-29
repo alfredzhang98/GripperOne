@@ -73,6 +73,8 @@ Calibration takes about 1.5–3 minutes, depending on the starting position.
 - The motor's output-shaft encoder only tracks the angle within one turn, but the travel is about 7.2 rad, more than one turn, so after power-up the reading may be off by exactly one full turn.
 - `home` closes slowly until the pads touch and compares the result with the stored contact position. If the error is within 0.03 rad (or one full turn plus less than 0.03 rad), all stored positions are restored and the gripper stops at 5 %. Takes about 40 s.
 - If it hits an object along the way, it reports an error asking you to remove it and retry; the stored calibration is not invalidated.
+- It checks the pad contact position (the closed end) and does not travel to the open end; the open end is the stored open position plus the measured difference.
+- If a calibration or home check has already completed since the motor was powered on, `home` makes no check: it only moves to 5 % closed, and the current calibration stays valid (since 2026-10-29).
 
 **Current results (bench, 2026-10-23):**
 
@@ -103,6 +105,9 @@ Calibration takes about 1.5–3 minutes, depending on the starting position.
 - When the driver is at the limit and the gripper lags the expected position but is still moving, the limit is multiplied by 1.25 every 100 ms, up to 3.0 N·m for opening and 1.0 N·m for closing.
 - At the limit and no movement for 300 ms: treated as blocked; the gripper stops and reports `move blocked`.
 - While closing, if the pad force rises 0.5 N above its starting value and is at least 1 N, the gripper stops.
+- The starting value is the lowest reading since the current closing started, and it is kept until the next opening move:
+  - a new closing command that arrives while the gripper is still closing (for example from dragging the GUI slider, about 10 commands per second) does not reset it;
+  - after a stop on contact, a further closing command stops again at once instead of pressing another 0.5 N into the object per command. Use the grip command to hold an object.
 
 **Measured (5 % ↔ 95 %, travel 6.4 rad):**
 
@@ -150,16 +155,42 @@ Calibration takes about 1.5–3 minutes, depending on the starting position.
 | Cap increase | When force is below F_t − db, pads read contact, gripper not moving, and current at the cap for 100 ms, ΔI increases by 0.03 N·m | ΔI at most 0.30 N·m |
 | Integral | Increases by 2 × (F_t − F) ÷ k per second; when the gripper is not moving, by at least 20 N ÷ k per second | Current rises at most 20 N ÷ k per second |
 
-**Position target:**
+**Stiffness K of the object between the pads (N/rad):** every correction's distance and speed are computed from K, so soft and hard objects follow the same rules.
+
+| Item | Rule |
+| --- | --- |
+| Position used | The jaw position 50 ms earlier, aligned with the tactile delay |
+| Start value and ceiling | The stored pad stiffness (pads pressed directly together, currently 300 N/rad). An object between the pads can only lower it; a K that is too high only makes corrections smaller and slower |
+| Measurement | The larger of the secant from the contact point and the latest local slope; computed only over at least 0.008 rad of travel and 1 N of force change |
+| Before a measurement | After travel Δx (≥ 0.01 rad) with a force rise of only ΔF, K ≤ (ΔF + 0.5 N) ÷ Δx, so K drops quickly for a soft object |
+| Range | 3 N/rad up to the stored pad stiffness |
+
+**Position target** (time constant T = 0.25 s, 5 × the 50 ms tactile delay):
 
 | Force range | Action |
 | --- | --- |
-| F < F_t − db | Target 0.05 rad ahead of the gripper, speed limit 1.0 rad/s, keep pressing |
-| Within the target band | Hold at the current position |
-| F > F_t + db | Current decreases via the integral; the position target backs off at 0.1 rad/s (lagging the gripper by at most 0.03 rad) to actively shed force |
+| F below the target band | Target (F_t − F) ÷ K ahead of the jaw, limited to 0.003–0.05 rad; speed limit (F_t − F) ÷ (K × T), limited to 0.02–1.0 rad/s |
+| Within the target band | Hold at the current position. If the error still exceeds db for 300 ms, make one correction of (F_t − F) ÷ K at \|F_t − F\| ÷ (K × T); an opening correction uses at least 1.5 × I_f |
+| F above the target band | Current decreases via the integral; the position target backs off at (F − F_t) ÷ (K × T) (0.01–1.0 rad/s), lagging the jaw by at most (F − F_t) ÷ K (0.003–0.3 rad). Unloading has its own current floor: it starts at 1.5 × I_f and, while the target lags by the full limit and the jaw does not move, is multiplied by 1.25 every 100 ms, up to 0.06 pu (1.16 N·m). The floor is used only while the target is more open than the jaw; if the object pushes the jaw more open than the target, the target follows the jaw instead of pulling it back. The extra current can therefore only pull the jaw open, never add grip force |
 | F > min(F_t + max(1 N, 30 % × F_t), 22 N) | Current drops immediately to I_f + 0.5 F_t ÷ k |
 
-After the force stays within the target band for 150 ms, the state changes to `HOLDING`.
+The target band has hysteresis: the gripper stops when the force enters F_t ± db and resumes pressing or unloading only after the force leaves F_t ± 3 db. Errors between the two are removed by the single correction above. After the force stays within the target band for 150 ms, the state changes to `HOLDING`; it returns to `GRIPPING` when the force leaves F_t ± 3 db.
+
+**Idealised simulation** (2026-10-29; linear object, no friction, no current limit, 50 ms tactile delay, starting at contact):
+
+| K (N/rad) | 3 N: peak / within ±db | 8 N: peak / within ±db | 8 → 1 N time |
+| --- | --- | --- | --- |
+| 6 | 2.82 N / 1.05 s | 7.77 N / 1.50 s | 1.21 s |
+| 54 | 2.82 N / 0.83 s | 7.76 N / 0.77 s | 0.58 s |
+| 300 | 3.09 N / 0.33 s | 8.08 N / 0.51 s | 0.55 s |
+
+The simulation ignores friction, the current limit and the different loading and unloading stiffness of foam. It only rules out an obviously unstable T; bench measurements decide.
+
+**History of these changes (2026-10-29, none verified on the bench yet):**
+
+1. Finger, 3 N target: below the band, every shortfall produced the same 0.05 rad lead at 1.0 rad/s. The finger's stiffness was about 54 N/rad, so 0.05 rad alone is about 2.7 N, and the force cycled between 2.7 and 4.8 N. Band hysteresis was added.
+2. Target lowered step by step from 7 N to 0.5 N: the pads stayed at 4.9 / 4.3 N, with −0.12 N·m and −0.01 rad/s; the torque could not overcome static friction. The unload current floor was added.
+3. Sponge, 8 N target: the force stayed at 7.1–7.7 N, inside the ±3 db hysteresis; on 8 → 1 N it fell only to 4.1 N in 6 s, at the fixed 0.1 rad/s walk-back (this sponge is about 6 N/rad). Corrections were made K-based and the in-band correction was added.
 
 **Sponge test (target 3 N, 2026-10-23):**
 

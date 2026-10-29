@@ -200,7 +200,9 @@ typedef enum {
 
     /* --- gripper high-level app (0x4-) --- (0x40-0x45, 0x48 need unlock) */
     OP_GRIP_CALIBRATE  = 0x40,  /* full: open stop (current) + pad touch (tactile), saved */
-    OP_GRIP_HOME       = 0x41,  /* open-stop check, then the saved calibration (else full) */
+    OP_GRIP_HOME       = 0x41,  /* close until the pads touch, compare with the saved
+                                 * touch (else full); already calibrated since the
+                                 * motor was probed: only moves to 5 % closing */
     OP_GRIP_SET_CLOSE  = 0x42,  /* f0 = closing percent 5 .. 95 (0 = open
                                  * position, 100 = closed); optional f1 = speed
                                  * rad/s, 0.05 .. 15 (0 or absent = 2.0)      */
@@ -214,6 +216,13 @@ typedef enum {
     OP_GRIP_STOP       = 0x46,  /* hold current position (always allowed)     */
     OP_GRIP_GET_CALIB  = 0x47,  /* -> calibration + status response          */
     OP_GRIP_MOVE_DEG   = 0x48,  /* f0 = deg from the closed position, f1 = deg/s */
+    OP_GRIP_STREAM_EN  = 0x49,  /* optional u16 = Hz, 1 .. 100 (0 or absent =
+                                 * 30): compact gripper telemetry (state, both
+                                 * pad forces, motor; no point arrays) on this
+                                 * transport until GRIP_STREAM_DIS, the link
+                                 * closes, or no command arrives on it for 3 s.
+                                 * Layout: emit_grip_tele() in app_supervisor.c */
+    OP_GRIP_STREAM_DIS = 0x4A,
 
     /* --- internal, never accepted from a link --- */
     OP_INTERNAL_TRANSPORT_CLOSED = 0xF0,  /* a transport's peer left: relock it */

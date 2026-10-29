@@ -168,7 +168,8 @@ static const char *TAG = "gripper";
                                        * between the pads; refused, not stored     */
 #define CAL_SPAN_MAX_RAD       8.0f
 #define CAL_SPAN_CHANGE_FRAC   0.15f  /* vs the saved stroke: refuse once           */
-#define CAL_VERIFY_TOL_RAD     0.03f  /* home check: open stop vs the stored one    */
+#define CAL_VERIFY_TOL_RAD     0.03f  /* home check: pad touch vs the stored one,
+                                       * modulo a whole encoder turn             */
 #define CAL_TARE_TIMEOUT_MS    4000
 #define CAL_TARE_SAMPLES       4
 #define CAL_SAMPLE_TIMEOUT_MS  2000
@@ -268,6 +269,33 @@ static const char *TAG = "gripper";
 #define GRIP_KI_PER_S          2.0f   /* integral gain, normalised by k            */
 #define GRIP_DEADBAND_N        0.25f  /* ~ sensor accuracy (1 % of 25 N)           */
 #define GRIP_DEADBAND_FRAC     0.04f
+#define GRIP_HOLD_EXIT_DB      3.0f   /* the band entered at +-db is left only beyond
+                                       * this x db (same as HOLDING -> GRIPPING)   */
+/* Force corrections scale with the stiffness K (N/rad) of what is between the
+ * pads: travel = force error / K, speed = force error / (K x GRIP_T_S). A fixed
+ * lead and speed suit one object only: on a finger (~54 N/rad, 2026-10-29) a
+ * 0.05 rad lead was 2.7 N and the force cycled 2.7-4.8 N for 3 N; on a sponge
+ * (~6 N/rad) the fixed 0.1 rad/s walk-back took 6 s to shed 3.6 N. */
+#define GRIP_T_S               0.25f  /* time constant, 5 x TAC_REACTION_S. Idealised
+                                       * simulation (K 6/54/300 N/rad, 3 and 8 N, no
+                                       * friction): nothing past the soft band,
+                                       * within +-db in 0.3-1.5 s, 8 -> 1 N in
+                                       * 0.6-1.2 s                                 */
+#define GRIP_K_MIN             3.0f   /* N/rad: the softest object assumed          */
+#define GRIP_K_MAX_DEFAULT     300.0f /* N/rad without a stored pad stiffness. The
+                                       * pads alone (pad on pad) are the stiffest
+                                       * case, so K starts there and never exceeds
+                                       * it: too high a K only corrects too slowly */
+#define GRIP_K_MAX_CAP         2000.0f
+#define GRIP_K_MIN_DX          (10.0f * POS_LSB_RAD) /* K from at least this travel */
+#define GRIP_K_MIN_DF          1.0f   /* ... and this force change                  */
+#define GRIP_K_UB_DX           0.01f  /* travelled this far while the force barely  */
+#define GRIP_K_UB_MARGIN_N     0.5f   /* rose: K <= (dF + this) / dx                */
+#define GRIP_PUSH_LEAD_RAD     0.05f  /* below the band: target at most this far ahead */
+#define GRIP_PUSH_MIN_LEAD_RAD 0.003f
+#define GRIP_PUSH_MIN_SPEED    0.02f  /* rad/s */
+#define GRIP_TRIM_MS           300    /* in the band but off by more than db this
+                                       * long: one correction of error / K        */
 #define GRIP_SLEW_N_PER_S      20.0f  /* max current rise, as force rate via k     */
 #define GRIP_STALL_RAMP_N_S    20.0f  /* below target with the jaw held by static
                                        * friction: the current rises at this (force
@@ -308,10 +336,10 @@ static const char *TAG = "gripper";
 #define GRIP_SOFT_BAND_N       1.0f   /* above target + band: cut current at once  */
 #define GRIP_SOFT_BAND_FRAC    0.30f
 #define GRIP_SETTLE_MS         150
-#define GRIP_UNLOAD_SPEED      0.1f   /* rad/s: target walks back while above band
-                                       * (0.02 took 1.4 s to unload 1.3 N of sponge
-                                       * overshoot, bench 2026-10-23)              */
-#define GRIP_UNLOAD_MAX_RAD    0.03f  /* ... never more than this behind the jaw    */
+#define GRIP_UNLOAD_MIN_SPEED  0.01f  /* rad/s: target walks back at excess / (K x T) */
+#define GRIP_UNLOAD_MIN_LAG_RAD 0.003f /* ... at most excess / K behind the jaw,    */
+#define GRIP_UNLOAD_MAX_LAG_RAD 0.3f   /* within these: a jaw that breaks free
+                                       * cannot open further than the force needs */
 #define GRIP_LOST_MS           100    /* no pad force this long: back to approach   */
 #define GRIP_MISMATCH_FRAC     0.3f   /* pads below this x k*(i - friction) ...     */
 #define GRIP_MISMATCH_N        1.0f   /* ... minus this, while pushing and stalled  */
@@ -521,6 +549,7 @@ static float    s_move_target = 0.0f;
 static float    s_move_speed = MOVE_SPEED;
 static uint32_t s_move_timeout_ms = MOVE_TIMEOUT_MS;
 static float    s_move_f_start = 0.0f;
+static bool     s_move_contact_hold = false; /* last closing move stopped on contact */
 static bool     s_hold = false;
 static float    s_hold_pos = 0.0f;
 static float    s_hold_cur = -1.0f;     /* pu; < 0 = move_cap()               */
@@ -547,6 +576,17 @@ static uint32_t s_mismatch_ms = 0;
 static bool     s_soft_logged = false;
 static bool     s_unloading = false;
 static float    s_unload_tgt = 0.0f;
+static float    s_unload_cur = 0.0f;       /* drive current floor while unloading, pu */
+static uint32_t s_unload_raise_ms = 0;
+static float    s_band_speed = 0.0f;       /* speed limit of the latched target, rad/s */
+static uint32_t s_trim_ms = 0;
+/* stiffness of what is between the pads, from force vs delayed jaw position */
+static float    s_k_est = GRIP_K_MAX_DEFAULT;  /* N/rad */
+static bool     s_k_measured = false;
+static float    s_k_x0 = 0.0f, s_k_f0 = 0.0f;  /* contact point */
+static float    s_k_xl = 0.0f, s_k_fl = 0.0f;  /* reference of the local slope */
+static float    s_k_loc = 0.0f;                /* latest local slope, 0 = none yet */
+static float    s_k_logged = 0.0f;
 static bool     s_band_latched = false;
 static float    s_band_tgt = 0.0f;
 static float    s_drop_ring[GRIP_DROP_WIN_TICKS];   /* recent pad force, one per tick */
@@ -1610,6 +1650,7 @@ static void cal_done_open(void)
     s_move_timeout_ms = MOVE_TIMEOUT_MS;
     move_current_init(false);
     s_move_f_start = tac_max_ok();
+    s_move_contact_hold = false;
     s_motion_dir = -CLOSE_DIR;
     s_hold = false;
     set_state(GRIPPER_MOVING);
@@ -2328,13 +2369,22 @@ static void start_move(float target, float speed)
 {
     const float a = pos_at_pct(MOVE_PCT_MIN), b = pos_at_pct(MOVE_PCT_MAX);
     target = clampf(target, fminf(a, b), fmaxf(a, b));
+    /* A closing move keeps the contact baseline of the closing move before it
+     * (still running, or stopped on contact): a host that re-sends SET_CLOSE
+     * while closing (a dragged slider, ~10 commands/s) must not raise the
+     * baseline with every command, nor press 0.5 N further into an object per
+     * command. The lowest reading since then is kept, so a removed object does
+     * not block the next close. An opening move starts afresh. */
+    const bool closing = sgnf(target - s_in.pos) == CLOSE_DIR;
+    const bool keep = closing && (s_move_contact_hold || (s_state == GRIPPER_MOVING && s_motion_dir == CLOSE_DIR));
     s_move_target = target;
     s_motion_dir = sgnf(target - s_in.pos);
     move_current_init(s_motion_dir == CLOSE_DIR);
     s_move_speed = speed > 0.0f ? clampf(speed, MOVE_SPEED_MIN, MOVE_SPEED_MAX) : MOVE_SPEED;
     const float t_ms = 1.5f * 1000.0f * fabsf(target - s_in.pos) / s_move_speed;
     s_move_timeout_ms = t_ms > (float)MOVE_TIMEOUT_MS ? (uint32_t)t_ms : MOVE_TIMEOUT_MS;
-    s_move_f_start = tac_max_ok();
+    s_move_f_start = keep ? fminf(s_move_f_start, tac_max_ok()) : tac_max_ok();
+    if (!closing) s_move_contact_hold = false;
     s_grip_force_phase = false;
     s_grip_preopen = false;
     s_force_target = 0.0f;
@@ -2398,6 +2448,7 @@ static void move_tick(void)
     if (closing && fmax > fmaxf(s_move_f_start + MOVE_CONTACT_RISE_N, MOVE_CONTACT_MIN_N)) {
         NOTE_FAULT(GRIPPER_FAULT_CONTACT_DURING_MOVE, "%.2f N at %.3f rad; use GRIP for objects",
                    fmax, s_in.pos);
+        s_move_contact_hold = true;
         hold_here();
         set_state(GRIPPER_IDLE);
         return;
@@ -2482,6 +2533,68 @@ static float grip_ready_pos(void)
     return s_cal.pos_closed + GRIP_READY_OPEN_FRAC * (s_cal.pos_open - s_cal.pos_closed);
 }
 
+/* Jaw position TAC_REACTION_S ago: where the jaw was when the newest tactile
+ * reading was taken. While the history is shorter than that, its oldest
+ * sample - never the present position, which would pair an old force with a
+ * newer position and make an object look softer than it is. */
+static float pos_delayed(void)
+{
+    float d;
+    if (hist_delta((uint32_t)(TAC_REACTION_S * 1000.0f), &d)) return s_in.pos - d;
+    if (s_hist_n == 0) return s_in.pos;
+    return s_hist_p[(s_hist_head + HIST_LEN - s_hist_n) % HIST_LEN];
+}
+
+static float grip_k_max(void)
+{
+    const float ks = s_cal.pad_stiffness;
+    return ks > 1.0f ? clampf(ks, GRIP_K_MIN, GRIP_K_MAX_CAP) : GRIP_K_MAX_DEFAULT;
+}
+
+/* At contact: K starts at the stiffest case, the pads alone. */
+static void grip_k_begin(float f)
+{
+    s_k_x0 = s_k_xl = pos_delayed();
+    s_k_f0 = s_k_fl = f;
+    s_k_loc = 0.0f;
+    s_k_est = grip_k_max();
+    s_k_measured = false;
+    s_k_logged = 0.0f;
+}
+
+/* Stiffness from the force and the jaw position it belongs to: the larger of
+ * the secant from contact and the latest local slope (foam stiffens as it is
+ * compressed, and is stiffer unloading than loading: erring high only makes a
+ * correction smaller). Before either exists, travel without a matching force
+ * rise bounds K from above, so a soft object is not pushed at the pace of the
+ * stiffest one for long. */
+static void grip_k_update(float f)
+{
+    const float x = pos_delayed();
+    const float dx = (x - s_k_x0) * CLOSE_DIR;
+    const float df = f - s_k_f0;
+    const float k_sec = (dx >= GRIP_K_MIN_DX && df >= GRIP_K_MIN_DF) ? df / dx : 0.0f;
+    if (fabsf(x - s_k_xl) >= GRIP_K_MIN_DX && fabsf(f - s_k_fl) >= GRIP_K_MIN_DF) {
+        s_k_loc = fabsf(f - s_k_fl) / fabsf(x - s_k_xl);
+        s_k_xl = x;
+        s_k_fl = f;
+    }
+    const float k_cand = fmaxf(k_sec, s_k_loc);
+    const char *src = NULL;
+    if (k_cand > 0.0f) {
+        s_k_est = clampf(k_cand, GRIP_K_MIN, grip_k_max());
+        s_k_measured = true;
+        src = k_cand == k_sec ? "secant from contact" : "local slope";
+    } else if (dx >= GRIP_K_UB_DX) {
+        s_k_est = clampf((fmaxf(df, 0.0f) + GRIP_K_UB_MARGIN_N) / dx, GRIP_K_MIN, grip_k_max());
+        src = "upper bound from travel";
+    }
+    if (src && (s_k_logged <= 0.0f || fabsf(s_k_est - s_k_logged) > 0.25f * s_k_logged)) {
+        ESP_LOGI(TAG, "grip: object stiffness %.0f N/rad (%s: %.2f N over %.4f rad)", s_k_est, src, df, dx);
+        s_k_logged = s_k_est;
+    }
+}
+
 static void grip_approach_begin(void)
 {
     /* Closing at the grip speed toward GRIP_NO_OBJECT_FRAC, speeding up and
@@ -2521,6 +2634,8 @@ static void force_phase_begin(void)
     s_soft_logged = false;
     s_unloading = false;
     s_band_latched = false;
+    s_trim_ms = 0;
+    grip_k_begin(fmaxf(s_in.fz[0], s_in.fz[1]));
     s_drop_n = 0;
     s_drop_head = 0;
     s_drop_watch_ms = 0;
@@ -2750,14 +2865,28 @@ static void grip_tick(void)
     }
 
     /* Three zones. Gearbox and linkage friction hold whatever force the jaw
-     * was left at, so lowering the current alone cannot reduce an overshoot:
-     *   below the band  - push: target ahead of the jaw, current integrates up
-     *                     (force on the loading branch is k * (i - i_offset));
-     *   inside the band - hold the position where the force was right;
-     *   above the band  - integrate down AND walk the target back slowly so
-     *                     the drive actively unloads the jaw against friction. */
-    const bool above = fmax > ft + db;
-    const bool below = fmax < ft - db;
+     * was left at, so lowering the current alone cannot reduce an overshoot.
+     * Every correction is the force error over the object's stiffness K:
+     *   below the band  - push: target error / K ahead of the jaw at error /
+     *                     (K x T), current integrates up (force on the loading
+     *                     branch is k * (i - i_offset));
+     *   inside the band - hold the position where the force was right; the
+     *                     band is entered at +-db and left beyond
+     *                     GRIP_HOLD_EXIT_DB x db, so a held object that relaxes
+     *                     or a hand that moves a little does not restart a push.
+     *                     Still off by more than db for GRIP_TRIM_MS: one slow
+     *                     correction of error / K (2026-10-29: 8 N target held
+     *                     at 7.1-7.7 N inside the wide band);
+     *   above the band  - integrate down AND walk the target back at excess /
+     *                     (K x T) so the drive actively unloads the jaw against
+     *                     friction. */
+    if (fmax >= TAC_TOUCH_N) grip_k_update(fmax);
+    const float k_obj = s_k_est;
+    const float db_now = s_band_latched ? GRIP_HOLD_EXIT_DB * db : db;
+    const bool above = fmax > ft + db_now;
+    const bool below = fmax < ft - db_now;
+    float v_drive = GRIP_FORCE_SPEED;
+    float i_floor = 0.0f;   /* drive current at least this (only toward opening) */
     float tgt;
     if (above) {
         if (fmax > soft) {
@@ -2770,15 +2899,53 @@ static void grip_tick(void)
         } else {
             s_i_int += GRIP_KI_PER_S * err / k * dt_s();
         }
+        const float excess = fmax - ft;
+        const float lag = clampf(excess / k_obj, GRIP_UNLOAD_MIN_LAG_RAD, GRIP_UNLOAD_MAX_LAG_RAD);
+        v_drive = clampf(excess / (k_obj * GRIP_T_S), GRIP_UNLOAD_MIN_SPEED, GRIP_FORCE_SPEED);
         if (!s_unloading) {
             s_unloading = true;
             s_unload_tgt = s_in.pos;
+            s_unload_cur = GRIP_STATIC_FACTOR * s_grip_fric;
+            s_unload_raise_ms = 0;
+            ESP_LOGI(TAG, "unloading %.2f N above %.1f N: back at %.3f rad/s, up to %.4f rad behind "
+                          "(K %.0f N/rad)", excess, ft, v_drive, lag, k_obj);
         }
-        s_unload_tgt -= CLOSE_DIR * GRIP_UNLOAD_SPEED * dt_s();
-        if ((s_in.pos - s_unload_tgt) * CLOSE_DIR > GRIP_UNLOAD_MAX_RAD) {
-            s_unload_tgt = s_in.pos - CLOSE_DIR * GRIP_UNLOAD_MAX_RAD;
+        s_unload_tgt -= CLOSE_DIR * v_drive * dt_s();
+        if ((s_in.pos - s_unload_tgt) * CLOSE_DIR < 0.0f) {
+            /* The object pushed the jaw open past the target: follow the jaw,
+             * never pull it back closed (with the floor current, that would
+             * add pad force). */
+            s_unload_tgt = s_in.pos;
+        }
+        bool at_lag_limit = false;
+        if ((s_in.pos - s_unload_tgt) * CLOSE_DIR > lag) {
+            s_unload_tgt = s_in.pos - CLOSE_DIR * lag;
+            at_lag_limit = true;
+        }
+        /* The drive's current limit holds in both directions, and the force
+         * current is cut to about the sliding friction up here, so it cannot
+         * pull the jaw open against static friction (2026-10-29: target
+         * lowered 7 -> 0.5 N, pads stayed at 4.9 / 4.3 N, -0.12 N*m, jaw
+         * still). Unloading drives with its own floor, from the static
+         * friction, raised while the target sits at the lag limit. It is used
+         * only in this branch, where the force is above the band and the
+         * target is more open than the jaw, so it pulls the jaw open; it falls
+         * back to the force current as soon as the force is in or below the
+         * band. */
+        if (at_lag_limit) {
+            s_unload_raise_ms += s_dt;
+            if (s_unload_raise_ms >= MOVE_RAISE_MS && s_unload_cur < GRIP_CUR_ABS_MAX_PU) {
+                s_unload_raise_ms = 0;
+                const float c = fminf(fmaxf(s_unload_cur, s_i_cmd) * MOVE_RAISE_FACTOR, GRIP_CUR_ABS_MAX_PU);
+                ESP_LOGI(TAG, "unloading: jaw held %.4f rad behind, current floor %.4f -> %.4f pu "
+                              "(torque %.3f N*m, %.2f N)", lag, s_unload_cur, c, s_in.torque, fmax);
+                s_unload_cur = c;
+            }
+        } else {
+            s_unload_raise_ms = 0;
         }
         tgt = s_unload_tgt;
+        if ((s_in.pos - tgt) * CLOSE_DIR > POS_LSB_RAD) i_floor = s_unload_cur;
         s_band_latched = false;
     } else if (below) {
         if (fmax >= TAC_TOUCH_N) {
@@ -2802,15 +2969,39 @@ static void grip_tick(void)
                 s_cap_sat_ms = 0;
             }
         }
-        tgt = s_in.pos + CLOSE_DIR * SEEK_LEAD_RAD;
+        tgt = s_in.pos + CLOSE_DIR * clampf(err / k_obj, GRIP_PUSH_MIN_LEAD_RAD, GRIP_PUSH_LEAD_RAD);
+        v_drive = clampf(err / (k_obj * GRIP_T_S), GRIP_PUSH_MIN_SPEED, GRIP_FORCE_SPEED);
         s_unloading = false;
         s_band_latched = false;
     } else {
         if (!s_band_latched) {
             s_band_latched = true;
             s_band_tgt = s_in.pos;
+            s_band_speed = GRIP_FORCE_SPEED;
+            s_trim_ms = 0;
+        }
+        if (fabsf(err) > db) {
+            if (err > 0.0f) {
+                s_i_int += GRIP_KI_PER_S * err / k * dt_s();   /* a closing trim needs the current */
+            }
+            s_trim_ms += s_dt;
+            if (s_trim_ms >= GRIP_TRIM_MS) {
+                s_trim_ms = 0;
+                const float step = clampf(err / k_obj, -GRIP_UNLOAD_MAX_LAG_RAD, GRIP_PUSH_LEAD_RAD);
+                s_band_tgt = s_in.pos + CLOSE_DIR * step;
+                s_band_speed = clampf(fabsf(err) / (k_obj * GRIP_T_S), GRIP_PUSH_MIN_SPEED, GRIP_FORCE_SPEED);
+                ESP_LOGI(TAG, "grip trim: %.2f N for %.1f N, %+.4f rad at %.3f rad/s (K %.0f N/rad)",
+                         fmax, ft, step, s_band_speed, k_obj);
+            }
+        } else {
+            s_trim_ms = 0;
+        }
+        if ((s_band_tgt - s_in.pos) * CLOSE_DIR < -POS_LSB_RAD) {
+            /* an opening trim pulls against static friction, like unloading */
+            i_floor = GRIP_STATIC_FACTOR * s_grip_fric;
         }
         tgt = s_band_tgt;
+        v_drive = s_band_speed;
         s_unloading = false;
     }
     if ((tgt - limit) * CLOSE_DIR > 0.0f) tgt = limit;
@@ -2821,7 +3012,9 @@ static void grip_tick(void)
     float i_new = i_target > s_i_cmd + up ? s_i_cmd + up : i_target;
     s_i_cmd = clampf(i_new, 0.0f, i_cap);
 
-    if (!drive(tgt, vel_field(GRIP_FORCE_SPEED), s_i_cmd)) {
+    /* i_floor is set only where the target is more open than the jaw, so the
+     * extra current can only pull the jaw open, never add pad force. */
+    if (!drive(tgt, vel_field(v_drive), fmaxf(s_i_cmd, i_floor))) {
         ERROR_OUT(GRIPPER_FAULT_MOTOR_NOT_READY, "drive refused while gripping");
         return;
     }
@@ -2853,7 +3046,7 @@ static void grip_tick(void)
     if (s_state == GRIPPER_GRIPPING && s_settle_ms >= GRIP_SETTLE_MS) {
         ESP_LOGI(TAG, "holding %.2f N (target %.1f N) at %.3f pu", fmax, ft, s_i_cmd);
         set_state(GRIPPER_HOLDING);
-    } else if (s_state == GRIPPER_HOLDING && fabsf(err) > 3.0f * db) {
+    } else if (s_state == GRIPPER_HOLDING && fabsf(err) > GRIP_HOLD_EXIT_DB * db) {
         set_state(GRIPPER_GRIPPING);
     }
 }
@@ -3171,8 +3364,23 @@ bool gripper_calibrate(void)
     return cal_start(false);
 }
 
+static bool move_allowed(void);
+
 bool gripper_home(void)
 {
+    if (calibrated()) {
+        /* Already calibrated in this motor power cycle (a calibration or a
+         * home finished since the motor was probed): the position frame has
+         * not changed, and a home check would only throw the valid
+         * calibration away if it failed (2026-10-29: home right after a full
+         * calibration stalled and left the gripper uncalibrated). End where
+         * a home ends instead: at the most open move position. */
+        if (!move_allowed()) return false;
+        ESP_LOGI(TAG, "home: already calibrated since the motor was probed - check skipped, moving to %.0f %%",
+                 MOVE_PCT_MIN);
+        start_move(pos_at_pct(MOVE_PCT_MIN), MOVE_SPEED);
+        return true;
+    }
     if (!have_stored_cal()) {
         ESP_LOGW(TAG, "home: no stored calibration for CLOSE_DIR %+.0f - running a full calibration", CLOSE_DIR);
         return cal_start(false);
